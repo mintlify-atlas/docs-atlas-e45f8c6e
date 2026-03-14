@@ -1,0 +1,134 @@
+{
+  "projectType": "cli-tool",
+  "projectName": "acpx",
+  "projectDescription": "Headless CLI client for stateful Agent Client Protocol (ACP) sessions",
+  "theme": "aspen",
+  "primaryColor": "#94cb04",
+  "lightColor": "#545454",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/agent-client-protocol",
+              "concepts/sessions",
+              "concepts/queue-management",
+              "concepts/permissions"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/basic-usage",
+              "guides/session-workflows",
+              "guides/output-formats",
+              "guides/configuration",
+              "guides/custom-agents"
+            ]
+          },
+          {
+            "group": "Built-in Agents",
+            "pages": [
+              "agents/overview",
+              "agents/pi",
+              "agents/openclaw",
+              "agents/codex",
+              "agents/claude",
+              "agents/other-agents"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "CLI Reference",
+        "groups": [
+          {
+            "group": "Commands",
+            "pages": [
+              "cli/overview",
+              "cli/prompt",
+              "cli/exec",
+              "cli/sessions",
+              "cli/status",
+              "cli/cancel",
+              "cli/set-mode",
+              "cli/set",
+              "cli/config"
+            ]
+          },
+          {
+            "group": "Options",
+            "pages": [
+              "cli/global-options",
+              "cli/prompt-options"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Advanced",
+        "groups": [
+          {
+            "group": "Architecture",
+            "pages": [
+              "advanced/architecture",
+              "advanced/session-lifecycle",
+              "advanced/queue-ipc",
+              "advanced/error-handling"
+            ]
+          },
+          {
+            "group": "Integration",
+            "pages": [
+              "advanced/agent-to-agent",
+              "advanced/orchestration",
+              "advanced/automation"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Persistent multi-turn ACP sessions scoped per repository",
+    "Named sessions for parallel workstreams in the same project",
+    "Prompt queueing with cooperative cancellation",
+    "Built-in registry for Pi, OpenClaw, Codex, Claude, and other ACP agents",
+    "Structured JSON output for automation and tooling",
+    "Session controls (set-mode, set config options)",
+    "Fire-and-forget execution with --no-wait flag",
+    "One-shot exec mode for stateless tasks",
+    "Graceful crash recovery and session reload",
+    "Flexible permission modes (approve-all, approve-reads, deny-all)",
+    "Config file support (global + project-level)",
+    "Session history and inspection commands"
+  ],
+  "publicApiSurface": [
+    "acpx [agent] prompt - Submit a prompt to a persistent session",
+    "acpx [agent] exec - Execute a one-shot prompt without session persistence",
+    "acpx [agent] sessions new - Create a new session",
+    "acpx [agent] sessions ensure - Get or create a session",
+    "acpx [agent] sessions list - List all sessions",
+    "acpx [agent] sessions show - Display session metadata",
+    "acpx [agent] sessions history - Show session conversation history",
+    "acpx [agent] sessions close - Close a session",
+    "acpx [agent] cancel - Cancel in-flight prompt via ACP session/cancel",
+    "acpx [agent] status - Check session process status",
+    "acpx [agent] set-mode - Set session mode (adapter-defined)",
+    "acpx [agent] set - Set session config option",
+    "acpx config show - Display resolved configuration",
+    "acpx config init - Initialize global config file"
+  ]
+}
