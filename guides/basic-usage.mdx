@@ -1,0 +1,273 @@
+---
+title: 'Basic Usage'
+description: 'Learn the fundamental usage patterns of acpx for working with ACP agents'
+icon: 'terminal'
+---
+
+## Overview
+
+acpx is a headless CLI client for the Agent Client Protocol (ACP). It lets you interact with AI coding agents through a structured protocol instead of PTY scraping. This guide covers the essential usage patterns you'll need to get started.
+
+## Quick Start
+
+<Steps>
+  <Step title="Install acpx">
+    Install acpx globally for faster startup:
+    
+    ```bash
+    npm install -g acpx@latest
+    ```
+    
+    Or use without installing:
+    
+    ```bash
+    npx acpx@latest codex "fix the tests"
+    ```
+  </Step>
+
+  <Step title="Create a session">
+    Sessions persist conversations across invocations:
+    
+    ```bash
+    acpx codex sessions new
+    ```
+  </Step>
+
+  <Step title="Send your first prompt">
+    Submit a prompt to your agent:
+    
+    ```bash
+    acpx codex "find the flaky test and fix it"
+    ```
+  </Step>
+</Steps>
+
+## Understanding Agent Commands
+
+acpx supports multiple ACP-compatible agents. The agent name comes immediately after `acpx`:
+
+```bash
+acpx pi "review recent changes"
+acpx openclaw "summarize active session state"
+acpx codex "fix the failing typecheck"
+acpx claude "refactor auth middleware"
+```
+
+### Default Agent
+
+If you omit the agent name, acpx uses `codex` as the default:
+
+```bash
+# These are equivalent:
+acpx "fix the tests"
+acpx codex "fix the tests"
+```
+
+You can change the default agent in your config file:
+
+```json ~/.acpx/cli/config.json
+{
+  "defaultAgent": "pi"
+}
+```
+
+## Sending Prompts
+
+### Direct Prompt Arguments
+
+The simplest way to send a prompt is as command arguments:
+
+```bash
+acpx codex "analyze the test failures"
+```
+
+### Explicit Prompt Subcommand
+
+You can also use the explicit `prompt` subcommand:
+
+```bash
+acpx codex prompt "analyze the test failures"
+```
+
+### Prompts from stdin
+
+Pipe prompt content from stdin:
+
+```bash
+echo "fix flaky tests" | acpx codex
+```
+
+Or use multi-line prompts:
+
+```bash
+cat <<EOF | acpx codex
+Please review the auth module and:
+1. Check for security issues
+2. Add missing test coverage
+3. Update the documentation
+EOF
+```
+
+### Prompts from Files
+
+Read prompt content from a file:
+
+```bash
+acpx codex --file prompt.md
+```
+
+Use `-` to explicitly read from stdin:
+
+```bash
+acpx codex --file - "also check lint warnings"
+```
+
+## Working with Output
+
+### Text Output (Default)
+
+By default, acpx provides human-readable output with tool updates:
+
+```bash
+acpx codex "review this PR"
+```
+
+Output includes:
+- `[thinking]` - Agent's reasoning process
+- `[tool]` - Tool executions with status
+- `[client]` - Client operations
+- `[done]` - Final status
+
+### Example Output
+
+```
+[thinking] Investigating test suite for flaky failures
+
+[tool] Run npm test -- --reporter=verbose (running)
+[tool] Run npm test -- --reporter=verbose (completed)
+  output:
+    ✓ auth.login (0.8s)
+    ✗ checkout.submit (timed out after 5000ms)
+    ✓ cart.add (0.3s)
+
+[thinking] Found it — checkout.submit has a race condition in the async setup
+
+[tool] Edit src/checkout.test.ts (completed)
+  output:
+    Success. Updated 1 file.
+
+[done] end_turn
+```
+
+## Common Patterns
+
+### Review Code
+
+```bash
+acpx codex "review recent changes"
+```
+
+### Fix Tests
+
+```bash
+acpx codex "find and fix the failing tests"
+```
+
+### Implement Features
+
+```bash
+acpx codex "implement user authentication with JWT tokens"
+```
+
+### Refactor Code
+
+```bash
+acpx codex "refactor the payment module to use async/await"
+```
+
+### Generate Documentation
+
+```bash
+acpx codex "generate API documentation for the user service"
+```
+
+## Working Directory
+
+By default, acpx runs in your current directory. Override with `--cwd`:
+
+```bash
+acpx --cwd ~/repos/backend codex "review recent auth changes"
+```
+
+## Permissions
+
+Control what the agent can do with permission flags:
+
+### Approve All
+
+Auto-approve all permission requests (useful for automation):
+
+```bash
+acpx --approve-all codex "apply the patch and run tests"
+```
+
+### Approve Reads (Default)
+
+Auto-approve read/search operations, prompt for others:
+
+```bash
+acpx --approve-reads codex "inspect repo structure and suggest plan"
+```
+
+### Deny All
+
+Deny all tool access:
+
+```bash
+acpx --deny-all codex "explain what you can do without tool access"
+```
+
+<Note>
+In non-interactive environments (no TTY), unapproved operations are denied by default. Use `--non-interactive-permissions fail` to fail instead of denying.
+</Note>
+
+## Timeouts
+
+Set a maximum wait time for agent responses:
+
+```bash
+acpx --timeout 90 codex "investigate intermittent test timeout"
+```
+
+The timeout value is in seconds and accepts decimals.
+
+## Using Custom Agents
+
+Use the `--agent` flag to specify a custom ACP server:
+
+```bash
+acpx --agent ./my-custom-acp-server "do something"
+```
+
+Or with full command options:
+
+```bash
+acpx --agent './bin/dev-acp --profile ci' "run checks"
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Session Workflows" icon="layer-group" href="/guides/session-workflows">
+    Learn how to manage sessions for multi-turn conversations
+  </Card>
+  <Card title="Output Formats" icon="file-code" href="/guides/output-formats">
+    Explore JSON and quiet output modes for automation
+  </Card>
+  <Card title="Configuration" icon="gear" href="/guides/configuration">
+    Set up config files for defaults and custom agents
+  </Card>
+  <Card title="Custom Agents" icon="robot" href="/guides/custom-agents">
+    Integrate your own ACP-compatible agents
+  </Card>
+</CardGroup>

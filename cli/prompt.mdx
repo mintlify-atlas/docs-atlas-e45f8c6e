@@ -1,0 +1,253 @@
+---
+title: "prompt"
+description: "Send prompts to persistent ACP sessions"
+---
+
+## Overview
+
+The `prompt` command sends a prompt to a persistent session. Sessions are scoped by agent command, working directory, and optional session name. If a session doesn't exist, the command exits with code `4` and guidance to create one.
+
+## Syntax
+
+```bash
+acpx [global_options] <agent> prompt [prompt_options] [prompt_text...]
+acpx [global_options] prompt [prompt_options] [prompt_text...]  # defaults to codex
+
+# Implicit form (no "prompt" keyword)
+acpx [global_options] <agent> [prompt_options] [prompt_text...]
+acpx [global_options] [prompt_text...]  # defaults to codex
+```
+
+## Behavior
+
+1. **Session Lookup**: Finds existing session for scope key `(agentCommand, cwd, name?)`
+2. **No Auto-Create**: Does not auto-create sessions. Missing scope exits with code `4` and prints guidance to run `sessions new`
+3. **Sends Prompt**: Submits the prompt to the resumed or newly started session
+4. **Queue Awareness**: If another prompt is already running for that session, submits to the running queue owner instead of starting a second ACP subprocess
+5. **Wait Behavior**: By default waits for queued prompt completion; `--no-wait` returns after queue acknowledgement
+6. **Metadata Update**: Updates session metadata after completion
+
+<Note>
+The implicit prompt form (without the `prompt` keyword) is the most common usage pattern. Both forms are functionally equivalent.
+</Note>
+
+## Prompt Options
+
+<ParamField path="-s, --session" type="string">
+  Use named session instead of cwd default. Adds `name` into the scope key for parallel conversations.
+</ParamField>
+
+<ParamField path="--no-wait" type="boolean">
+  Queue prompt and return immediately if session is busy. Default behavior waits for completion.
+</ParamField>
+
+<ParamField path="-f, --file" type="string">
+  Read prompt text from file. Use `-` for stdin. Can be combined with additional prompt arguments.
+</ParamField>
+
+## Session Scoping
+
+Sessions are automatically scoped using directory-walk routing:
+
+1. Detect the nearest git root by checking for `.git` while walking up from `absoluteCwd`
+2. If a git root is found, walk from `absoluteCwd` up to that git root (inclusive)
+3. If no git root exists, only check exact `absoluteCwd` (no parent-directory walk)
+4. At each checked directory, find the first active (non-closed) session matching `(agentCommand, dir, optionalName)`
+5. If found, use that session record for prompt queueing and resume attempts
+6. If not found, exit with code `4` and print guidance to create one via `sessions new`
+
+<Note>
+Use `sessions new [--name <name>]` when you want a fresh scoped session. Use `sessions ensure [--name <name>]` for idempotent "get-or-create" behavior.
+</Note>
+
+## Prompt Queueing
+
+When a prompt is already in flight for a session, acpx uses a per-session queue owner process:
+
+1. Owner process keeps the active turn running
+2. Other acpx invocations enqueue prompts through local IPC
+3. Owner drains queued prompts one-by-one after each completed turn
+4. After the queue drains, owner waits for new work up to TTL (`--ttl`, default 300s)
+5. Submitter either blocks until completion (default) or exits immediately with `--no-wait`
+6. If interrupted (Ctrl+C) during an active turn, acpx sends `session/cancel` first, waits briefly for cancelled completion, then force-kills only if needed
+
+## Examples
+
+### Basic Usage
+
+```bash
+# Implicit prompt (most common)
+acpx codex "fix the failing tests"
+
+# Explicit prompt command
+acpx codex prompt "fix the failing tests"
+
+# Default agent shortcut
+acpx "review recent changes"
+```
+
+### Prompt from Different Sources
+
+```bash
+# From command arguments
+acpx codex "investigate the timeout in checkout.test.ts"
+
+# From stdin (piped)
+echo "triage failing tests" | acpx codex
+
+# From file
+acpx codex --file prompt.md
+
+# From stdin (explicit) with additional context
+acpx codex --file - "also check lint warnings"
+```
+
+### Named Sessions
+
+```bash
+# Create named sessions for parallel work
+acpx codex sessions new --name backend
+acpx codex sessions new --name frontend
+
+# Prompt in named sessions
+acpx codex -s backend "optimize database queries"
+acpx codex -s frontend "improve loading states"
+```
+
+### Queue Management
+
+```bash
+# Default: wait for completion
+acpx codex "run the test suite"
+
+# No-wait: queue and return immediately
+acpx codex --no-wait "draft migration plan"
+
+# Check status while prompt is running
+acpx codex status
+
+# Cancel running prompt
+acpx codex cancel
+```
+
+### Working Directory Control
+
+```bash
+# Use custom working directory
+acpx --cwd ~/repos/api codex "review auth middleware"
+
+# Sessions are scoped by cwd
+acpx --cwd ~/repos/api codex sessions new
+acpx --cwd ~/repos/api codex "fix login flow"
+```
+
+## Session Recovery
+
+If a saved session PID is dead, acpx automatically:
+
+1. Respawns the agent
+2. Tries `session/load` with the stored session ID
+3. Transparently falls back to `session/new` when loading fails
+
+This ensures sessions are resilient to agent crashes or restarts.
+
+## Output
+
+### Text Format (Default)
+
+```bash
+acpx codex "review changes"
+```
+
+Output includes:
+- Assistant text
+- Tool status blocks
+- Client-operation logs
+- Plan updates
+- `[done] <reason>` at completion
+
+### JSON Format
+
+```bash
+acpx --format json codex "review changes"
+```
+
+Raw ACP JSON-RPC messages, one per line:
+
+```json
+{"jsonrpc":"2.0","id":"req-1","method":"session/prompt","params":{...}}
+{"jsonrpc":"2.0","method":"session/update","params":{...}}
+{"jsonrpc":"2.0","id":"req-1","result":{"stopReason":"end_turn"}}
+```
+
+### Quiet Format
+
+```bash
+acpx --format quiet codex "summarize changes"
+```
+
+Assistant text only, no tool updates or metadata.
+
+## Error Codes
+
+| Code | Meaning |
+|------|-------|
+| `0` | Success |
+| `1` | Agent/protocol/runtime error |
+| `3` | Timeout |
+| `4` | No session found |
+| `5` | Permission denied |
+| `130` | Interrupted (Ctrl+C) |
+
+## Common Patterns
+
+### PR Review Workflow
+
+```bash
+# Create dedicated session for PR
+acpx codex sessions new --name pr-842
+
+# Review PR with context
+acpx codex -s pr-842 "Review PR #842 for security issues"
+
+# Continue conversation
+acpx codex -s pr-842 "Now propose a minimal fix"
+
+# Close session when done
+acpx codex sessions close pr-842
+```
+
+### Parallel Workstreams
+
+```bash
+# Backend work
+acpx codex sessions new --name backend
+acpx codex -s backend "optimize checkout flow"
+
+# Docs work (in parallel)
+acpx codex sessions new --name docs
+acpx codex -s docs "document payment retry behavior"
+
+# List all sessions
+acpx codex sessions
+```
+
+### Fire-and-Forget
+
+```bash
+# Queue work and continue immediately
+acpx codex --no-wait "run full test suite and report failures"
+
+# Do other work
+# ...
+
+# Check status later
+acpx codex status
+```
+
+## See Also
+
+- [exec](/cli/exec) - One-shot prompts without saved sessions
+- [sessions](/cli/sessions) - Session management commands
+- [cancel](/cli/cancel) - Cancel running prompts
+- [status](/cli/status) - Check session status

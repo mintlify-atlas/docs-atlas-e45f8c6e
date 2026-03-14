@@ -1,0 +1,498 @@
+---
+title: Claude Agent
+description: Using Anthropic's Claude Code with acpx through the claude-agent-acp adapter
+---
+
+Claude Code is Anthropic's coding assistant, wrapped for ACP compatibility by the `claude-agent-acp` adapter from Zed Industries.
+
+## Overview
+
+- **Built-in name**: `claude`
+- **Command**: `npx -y @zed-industries/claude-agent-acp`
+- **Adapter**: [claude-agent-acp](https://github.com/zed-industries/claude-agent-acp) (external adapter)
+- **Upstream**: [Claude Code](https://claude.ai/code)
+- **Type**: External ACP adapter wrapping Claude Code
+
+## Installation
+
+### Install Claude Code
+
+Follow the instructions at [claude.ai/code](https://claude.ai/code) to set up Claude Code.
+
+### Install acpx
+
+```bash
+npm install -g acpx@latest
+```
+
+The `claude-agent-acp` adapter will be auto-downloaded via `npx` on first use.
+
+## Basic Usage
+
+### Create a Session
+
+```bash
+acpx claude sessions new
+```
+
+### Send a Prompt
+
+```bash
+acpx claude "refactor the auth module"
+```
+
+### One-Shot Execution
+
+```bash
+acpx claude exec "explain the architecture"
+```
+
+## Session Management
+
+Claude supports all standard acpx session operations:
+
+```bash
+# Create and work with sessions
+acpx claude sessions new
+acpx claude "implement user preferences"
+
+# Named sessions for parallel workflows
+acpx claude sessions new --name refactor
+acpx claude -s refactor "refactor database layer"
+
+acpx claude sessions new --name docs
+acpx claude -s docs "update API documentation"
+
+# Session inspection
+acpx claude sessions list
+acpx claude sessions show
+acpx claude sessions history --limit 10
+
+# Close sessions
+acpx claude sessions close
+acpx claude sessions close refactor
+```
+
+## Session Controls
+
+```bash
+# Check session status
+acpx claude status
+
+# Cancel running prompt
+acpx claude cancel
+
+# Set agent mode
+acpx claude set-mode auto
+
+# Set configuration options
+acpx claude set max_tokens 4096
+```
+
+## Prompt Input Methods
+
+### Direct Prompt
+
+```bash
+acpx claude "analyze the error handling strategy"
+```
+
+### From File
+
+```bash
+acpx claude --file refactor-requirements.md
+```
+
+### From stdin
+
+```bash
+echo "review this code" | acpx claude
+cat requirements.txt | acpx claude
+```
+
+### stdin with Additional Context
+
+```bash
+cat codebase-summary.md | acpx claude --file - "focus on security"
+```
+
+## Queue Management
+
+### Fire-and-Forget
+
+```bash
+# Queue prompt without waiting for completion
+acpx claude --no-wait "generate comprehensive documentation"
+```
+
+### Queue Owner TTL
+
+```bash
+# Keep queue owner alive for 2 minutes
+acpx claude --ttl 120 "refactor module"
+
+# Keep alive indefinitely
+acpx claude --ttl 0 "interactive session"
+```
+
+## Output Formats
+
+### Text Mode (default)
+
+```bash
+acpx claude "review the PR"
+```
+
+Human-readable output with thinking process and tool calls:
+
+```
+[thinking] Analyzing the pull request for issues
+[tool] Read src/auth.ts (completed)
+[tool] Read tests/auth.test.ts (completed)
+[thinking] The authentication logic looks solid...
+```
+
+### JSON Mode
+
+```bash
+acpx --format json claude exec "review code"
+```
+
+Machine-readable NDJSON events:
+
+```json
+{"type":"thinking","content":"Analyzing..."}
+{"type":"tool_call","status":"running","title":"Read file"}
+{"type":"result","content":"Review complete"}
+```
+
+### JSON-Strict Mode
+
+```bash
+acpx --format json --json-strict claude exec "review code"
+```
+
+JSON-only output with no stderr noise.
+
+### Quiet Mode
+
+```bash
+acpx --format quiet claude "summarize in 3 sentences"
+```
+
+Outputs only the final assistant response.
+
+## Permission Management
+
+### Auto-Approve All Operations
+
+```bash
+acpx --approve-all claude "refactor and run tests"
+```
+
+### Auto-Approve Reads Only (default)
+
+```bash
+acpx --approve-reads claude "analyze code structure"
+```
+
+### Deny All Operations
+
+```bash
+acpx --deny-all claude "explain your approach without execution"
+```
+
+### Non-Interactive Permissions
+
+```bash
+# Deny permission prompts in non-TTY (default)
+acpx --non-interactive-permissions deny claude "check"
+
+# Fail instead of denying
+acpx --non-interactive-permissions fail claude "check"
+```
+
+## Configuration
+
+### Global Config (~/.acpx/cli/config.json)
+
+```json
+{
+  "defaultAgent": "claude",
+  "defaultPermissions": "approve-reads",
+  "ttl": 300,
+  "format": "text"
+}
+```
+
+### Project Config (.acpxrc.json)
+
+```json
+{
+  "agents": {
+    "claude": {
+      "command": "npx -y @zed-industries/claude-agent-acp@latest"
+    }
+  }
+}
+```
+
+### Override Claude Command
+
+```json
+{
+  "agents": {
+    "claude": {
+      "command": "/custom/path/to/claude-agent-acp"
+    }
+  }
+}
+```
+
+## Practical Examples
+
+### Thoughtful Refactoring
+
+```bash
+# Create refactor session
+acpx claude sessions new --name refactor
+
+# Provide context and requirements
+acpx claude -s refactor --file refactor-plan.md
+
+# Execute with full permissions
+acpx --approve-all claude -s refactor "refactor auth module"
+
+# Review changes
+acpx claude -s refactor "explain the changes you made"
+```
+
+### Code Review Session
+
+```bash
+# Create PR review session
+acpx claude sessions new --name pr-789
+
+# Review with detailed analysis
+acpx claude -s pr-789 "Review PR #789 focusing on:
+- Code quality
+- Security issues
+- Performance implications
+- Test coverage"
+
+# Follow-up questions
+acpx claude -s pr-789 "suggest improvements"
+```
+
+### Documentation Generation
+
+```bash
+# Create docs session
+acpx claude sessions new --name documentation
+
+# Generate docs
+acpx claude -s documentation "Generate API documentation for all public functions in src/api/"
+
+# Add examples
+acpx claude -s documentation "add usage examples to each function"
+```
+
+### Architecture Analysis
+
+```bash
+# One-shot analysis
+acpx claude exec "analyze the codebase architecture and suggest improvements"
+
+# Or with context file
+acpx claude exec --file architecture-questions.md
+```
+
+## Advanced Workflows
+
+### Multi-Layer Refactoring
+
+```bash
+# Layer 1: Data layer
+acpx claude sessions new --name data-layer
+acpx --approve-all claude -s data-layer "refactor database access layer"
+
+# Layer 2: Business logic
+acpx claude sessions new --name business-layer
+acpx --approve-all claude -s business-layer "refactor business logic to use new data layer"
+
+# Layer 3: API layer
+acpx claude sessions new --name api-layer
+acpx --approve-all claude -s api-layer "update API endpoints"
+```
+
+### Parallel Feature Development
+
+```bash
+# Backend feature
+acpx claude sessions new --name backend-feature
+acpx claude -s backend-feature "implement notification system"
+
+# Frontend integration
+acpx claude sessions new --name frontend-feature
+acpx claude -s frontend-feature "create notification UI"
+```
+
+### CI/CD Integration
+
+```bash
+#!/bin/bash
+# code-review.sh - Automated code review in CI
+
+REVIEW_OUTPUT=$(acpx \
+  --format json \
+  --json-strict \
+  --non-interactive-permissions fail \
+  --approve-reads \
+  claude exec "Review changed files for issues" \
+  | jq -r 'select(.type=="result") | .content')
+
+echo "$REVIEW_OUTPUT"
+
+# Fail if critical issues found
+if echo "$REVIEW_OUTPUT" | grep -q "CRITICAL"; then
+  exit 1
+fi
+```
+
+## Working Directory Override
+
+```bash
+# Work on a specific project
+acpx --cwd ~/repos/backend claude "review authentication"
+
+# Multi-repo workflow
+acpx --cwd ~/repos/api claude -s api "update API"
+acpx --cwd ~/repos/client claude -s client "update client"
+```
+
+## Comparison with Direct Claude Code
+
+| Feature | Claude Code (direct) | acpx claude |
+|---------|---------------------|-------------|
+| Protocol | Claude native | ACP (standardized) |
+| Sessions | Basic | Advanced lifecycle |
+| Queueing | No | Built-in queue |
+| Named Sessions | No | Yes |
+| History | Limited | Full turn history |
+| Multi-turn | Yes | Enhanced |
+| JSON Output | No | Yes (NDJSON events) |
+| Orchestration | Manual | First-class |
+
+## Troubleshooting
+
+### Claude Code Not Found
+
+Ensure Claude Code is properly set up:
+
+```bash
+# Visit claude.ai/code for setup instructions
+```
+
+### Adapter Download Failed
+
+Manually install the adapter:
+
+```bash
+npm install -g @zed-industries/claude-agent-acp@latest
+```
+
+### Session Not Found
+
+Create a session first:
+
+```bash
+# Create new session
+acpx claude sessions new
+
+# Or use ensure for idempotent creation
+acpx claude sessions ensure
+```
+
+### Permission Denied Errors
+
+Use appropriate permission flags:
+
+```bash
+# For read/write operations
+acpx --approve-all claude "task requiring file access"
+```
+
+### Configuration Not Applied
+
+Verify config:
+
+```bash
+acpx config show
+```
+
+### Timeout on Long Tasks
+
+Increase timeout:
+
+```bash
+acpx --timeout 600 claude "comprehensive refactoring"
+```
+
+## Best Practices
+
+### Use Named Sessions for Organized Work
+
+```bash
+# Good: Organized workflow
+acpx claude sessions new --name feature-auth
+acpx claude sessions new --name bugfix-login
+
+# Avoid: Everything in default session
+```
+
+### Provide Context with Files
+
+```bash
+# Good: Clear context
+acpx claude --file requirements.md "implement feature"
+
+# Less effective: Vague prompt
+acpx claude "make it better"
+```
+
+### Use Appropriate Permission Levels
+
+```bash
+# Analysis: approve-reads
+acpx --approve-reads claude "analyze codebase"
+
+# Execution: approve-all
+acpx --approve-all claude "implement and test feature"
+```
+
+### Review Session History
+
+```bash
+# Check what was done
+acpx claude sessions history
+
+# Review before continuing
+acpx claude sessions show
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Sessions" icon="layer-group" href="/cli/sessions">
+    Deep dive into session management
+  </Card>
+  <Card title="Queue Management" icon="list" href="/concepts/queue-management">
+    Master queue behavior and TTL
+  </Card>
+  <Card title="Session Workflows" icon="diagram-project" href="/guides/session-workflows">
+    Advanced session patterns
+  </Card>
+  <Card title="Other Agents" icon="users" href="/agents/overview">
+    Explore other built-in agents
+  </Card>
+</CardGroup>

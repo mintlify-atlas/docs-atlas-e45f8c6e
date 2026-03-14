@@ -1,0 +1,298 @@
+---
+title: 'Global Options'
+description: 'Global options that apply to all acpx commands'
+icon: 'globe'
+---
+
+Global options can be used with any acpx command and control behavior like authentication, permissions, output formatting, and runtime settings.
+
+## Agent Selection
+
+### `--agent <command>`
+
+Override the agent with a raw ACP agent command string.
+
+<ParamField path="command" type="string" required>
+  The raw command to execute (e.g., `./my-custom-acp-server` or `node ./scripts/acp-dev.mjs`)
+</ParamField>
+
+<Note>
+Do not combine the `--agent` flag with a positional agent name. The resolved command string becomes the session scope key.
+</Note>
+
+**Examples:**
+
+```bash
+acpx --agent ./my-custom-acp-server 'do something'
+acpx --agent 'node ./scripts/acp-dev-server.mjs --mode ci' exec 'summarize changes'
+```
+
+## Working Directory
+
+### `--cwd <dir>`
+
+Set the working directory for the command. This affects session scoping and where the agent operates.
+
+<ParamField path="dir" type="string" default="current directory">
+  The directory path to use as the working directory
+</ParamField>
+
+The directory is stored as an absolute path for session scoping. When creating sessions via `sessions new`, this is the exact scope directory used.
+
+**Examples:**
+
+```bash
+acpx --cwd ~/repos/api codex 'review auth middleware'
+acpx --cwd /path/to/project codex sessions list
+```
+
+## Permission Modes
+
+Permission flags control how acpx handles tool permission requests from the agent. Choose exactly one mode.
+
+### `--approve-all`
+
+Auto-approve all permission requests without prompting.
+
+<Warning>
+This mode allows the agent to execute any tool operation without confirmation. Use with caution.
+</Warning>
+
+**Examples:**
+
+```bash
+acpx --approve-all codex 'apply this patch and run tests'
+acpx --approve-all pi 'refactor the auth module'
+```
+
+### `--approve-reads`
+
+Auto-approve read and search requests, but prompt for other operations like writes or destructive actions.
+
+<Note>
+This is the default permission mode when no flag is specified.
+</Note>
+
+**Examples:**
+
+```bash
+acpx --approve-reads codex 'inspect the repo and propose a plan'
+acpx --approve-reads openclaw 'analyze test coverage'
+```
+
+### `--deny-all`
+
+Automatically deny all permission requests.
+
+Use this mode when you want the agent to reason without executing any tools.
+
+**Examples:**
+
+```bash
+acpx --deny-all codex 'summarize this code without running tools'
+acpx --deny-all claude 'explain the architecture'
+```
+
+<Warning>
+Only one permission mode flag can be used at a time. Using multiple permission flags will result in an error.
+</Warning>
+
+## Authentication
+
+### `--auth-policy <policy>`
+
+Set the authentication policy when auth is required.
+
+<ParamField path="policy" type="string" default="skip">
+  Either `skip` or `fail`
+</ParamField>
+
+- **`skip`**: Skip authentication when required
+- **`fail`**: Fail the command when authentication is required
+
+**Examples:**
+
+```bash
+acpx --auth-policy fail codex 'run secure operation'
+acpx --auth-policy skip pi 'do something'
+```
+
+## Non-Interactive Permissions
+
+### `--non-interactive-permissions <policy>`
+
+Control behavior when a permission prompt cannot be shown (no TTY available).
+
+<ParamField path="policy" type="string" default="deny">
+  Either `deny` or `fail`
+</ParamField>
+
+- **`deny`**: Deny permission requests when prompting is unavailable (default)
+- **`fail`**: Fail with `PERMISSION_PROMPT_UNAVAILABLE` error
+
+**Examples:**
+
+```bash
+acpx --non-interactive-permissions fail codex 'fail fast when prompt cannot be shown'
+acpx --non-interactive-permissions deny openclaw 'deny requests when no TTY'
+```
+
+## Output Formatting
+
+### `--format <fmt>`
+
+Set the output format for command results.
+
+<ParamField path="fmt" type="string" default="text">
+  One of: `text`, `json`, `quiet`
+</ParamField>
+
+- **`text`**: Human-readable stream with assistant text, tool status, and completion markers
+- **`json`**: Raw ACP NDJSON stream for automation (one JSON-RPC message per line)
+- **`quiet`**: Concatenated assistant text only
+
+**Examples:**
+
+```bash
+acpx --format json codex exec 'summarize open TODO items'
+acpx --format quiet claude 'what is the purpose of this repo?'
+acpx --format text pi 'explain the codebase structure'
+```
+
+### `--json-strict`
+
+Enable strict JSON mode. Requires `--format json` and suppresses all non-JSON stderr output.
+
+<Note>
+This flag is useful for machine-safe JSON output in automation pipelines.
+</Note>
+
+**Examples:**
+
+```bash
+acpx --format json --json-strict codex exec 'machine-safe JSON output'
+acpx --format json --json-strict openclaw exec 'analyze dependencies' | jq .
+```
+
+<Warning>
+Cannot be combined with `--verbose`. Use one or the other.
+</Warning>
+
+## Agent Model
+
+### `--model <id>`
+
+Specify the agent model ID to use for the session.
+
+<ParamField path="id" type="string">
+  The model identifier (adapter-specific)
+</ParamField>
+
+Model IDs are adapter-defined and vary by agent. Consult your agent's documentation for supported model values.
+
+**Examples:**
+
+```bash
+acpx --model gpt-4 codex 'review this code'
+acpx --model claude-opus-4 claude 'analyze performance'
+```
+
+## Tool Control
+
+### `--allowed-tools <list>`
+
+Restrict which tools the agent can use. Provide a comma-separated list of tool names.
+
+<ParamField path="list" type="string">
+  Comma-separated tool names (use `""` for no tools)
+</ParamField>
+
+**Examples:**
+
+```bash
+acpx --allowed-tools read,grep codex 'analyze code without writes'
+acpx --allowed-tools "" openclaw 'think without tools'
+acpx --allowed-tools bash,write pi 'run and save results'
+```
+
+### `--max-turns <count>`
+
+Set the maximum number of turns for the session.
+
+<ParamField path="count" type="integer">
+  Positive integer for maximum turns
+</ParamField>
+
+**Examples:**
+
+```bash
+acpx --max-turns 5 codex 'quick analysis'
+acpx --max-turns 20 claude 'deep investigation'
+```
+
+## Timeout and TTL
+
+### `--timeout <seconds>`
+
+Set the maximum time to wait for an agent response.
+
+<ParamField path="seconds" type="number">
+  Positive number (decimal values allowed)
+</ParamField>
+
+If the agent doesn't respond within this time, the command exits with code `3`.
+
+**Examples:**
+
+```bash
+acpx --timeout 120 codex 'investigate flaky test failures'
+acpx --timeout 60.5 pi 'quick summary'
+```
+
+### `--ttl <seconds>`
+
+Set the queue owner idle TTL (time-to-live) before shutdown.
+
+<ParamField path="seconds" type="number" default="300">
+  Non-negative number (use `0` to keep alive forever)
+</ParamField>
+
+After the prompt queue drains, the queue owner waits for new work up to this TTL before shutting down.
+
+**Examples:**
+
+```bash
+acpx --ttl 30 codex 'keep queue owner warm for quick follow-up'
+acpx --ttl 0 openclaw 'keep alive indefinitely'
+acpx --ttl 600 pi 'extended idle time'
+```
+
+## Debugging
+
+### `--verbose`
+
+Enable verbose debug logs. Prints ACP and debug details to stderr.
+
+<Note>
+Cannot be combined with `--json-strict`.
+</Note>
+
+**Examples:**
+
+```bash
+acpx --verbose codex 'debug adapter startup issues'
+acpx --verbose openclaw 'see detailed protocol messages'
+```
+
+## Usage Notes
+
+- Global options must appear before the agent name or command
+- CLI flags always override config file values
+- Multiple permission flags (`--approve-all`, `--approve-reads`, `--deny-all`) are mutually exclusive
+- Invalid combinations (like `--json-strict` without `--format json`) will result in usage errors
+
+## See Also
+
+- [Prompt Options](/cli/prompt-options) - Options specific to prompt commands
+- [Config Reference](/cli/config) - Configuration file options
+- [Session Management](/cli/sessions) - Session lifecycle and scoping

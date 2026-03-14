@@ -1,0 +1,147 @@
+---
+title: Built-in Agents Overview
+description: Comprehensive guide to all ACP-compatible agents supported by acpx
+---
+
+acpx provides built-in support for 14 ACP-compatible coding agents, giving you a unified command surface to work with different AI assistants through the Agent Client Protocol.
+
+## What are Built-in Agents?
+
+Built-in agents are pre-configured agent commands that acpx recognizes by name. Instead of specifying the full command to launch an ACP server, you can use a simple agent name:
+
+```bash
+acpx codex "fix the failing tests"
+acpx claude "refactor the auth module"
+acpx pi "review recent changes"
+```
+
+Each built-in agent maps to a specific command that spawns an ACP-compatible server. acpx handles the lifecycle, session management, and protocol communication automatically.
+
+## Agent Registry
+
+All built-in agents are defined in acpx's agent registry. The registry maps short names to their corresponding launch commands:
+
+| Agent Name | Command | Adapter Type | Documentation |
+|------------|---------|--------------|---------------|
+| `pi` | `npx pi-acp` | External adapter wraps Pi Coding Agent | [Pi](https://github.com/mariozechner/pi) |
+| `openclaw` | `openclaw acp` | Native ACP support | [OpenClaw](https://github.com/openclaw/openclaw) |
+| `codex` | `npx @zed-industries/codex-acp` | External adapter wraps Codex CLI | [Codex](https://codex.openai.com) |
+| `claude` | `npx -y @zed-industries/claude-agent-acp` | External adapter wraps Claude Code | [Claude Code](https://claude.ai/code) |
+| `gemini` | `gemini --acp` | Native ACP support | [Gemini CLI](https://github.com/google/gemini-cli) |
+| `cursor` | `cursor-agent acp` | Native ACP support | [Cursor](https://cursor.com/docs/cli/acp) |
+| `copilot` | `copilot --acp --stdio` | Native ACP support | [GitHub Copilot](https://docs.github.com/copilot) |
+| `droid` | `droid exec --output-format acp` | Native ACP support | [Factory Droid](https://www.factory.ai) |
+| `iflow` | `iflow --experimental-acp` | Native ACP support (experimental) | [iFlow](https://github.com/iflow-ai/iflow-cli) |
+| `kilocode` | `npx -y @kilocode/cli acp` | CLI wraps agent with ACP | [Kilocode](https://kilocode.ai) |
+| `kimi` | `kimi acp` | Native ACP support | [Kimi](https://github.com/MoonshotAI/kimi-cli) |
+| `kiro` | `kiro-cli acp` | Native ACP support | [Kiro](https://kiro.dev) |
+| `opencode` | `npx -y opencode-ai acp` | CLI wraps agent with ACP | [OpenCode](https://opencode.ai) |
+| `qwen` | `qwen --acp` | Native ACP support | [Qwen Code](https://github.com/QwenLM/qwen-code) |
+
+## Adapter Types
+
+### Native ACP Support
+
+Agents like `openclaw`, `gemini`, `cursor`, `copilot`, `droid`, `iflow`, `kimi`, `kiro`, and `qwen` have built-in ACP protocol support. These agents expose ACP mode through command-line flags.
+
+### External ACP Adapters
+
+Agents like `pi`, `codex`, and `claude` use external adapter packages that bridge their native interfaces to ACP:
+
+- **pi-acp**: Wraps the Pi Coding Agent
+- **codex-acp**: Wraps Codex CLI from Zed Industries
+- **claude-agent-acp**: Wraps Claude Code from Anthropic
+
+These adapters are distributed as npm packages and auto-downloaded via `npx` on first use.
+
+### CLI Wrappers
+
+Agents like `kilocode` and `opencode` provide their own CLI tools that handle ACP communication when invoked with the `acp` subcommand.
+
+## Prerequisites
+
+acpx auto-downloads ACP adapters with `npx` on first use. You don't need to install adapter packages manually.
+
+The only prerequisite is the underlying coding agent you want to use. For example:
+
+- To use `acpx pi`, install [Pi Coding Agent](https://github.com/mariozechner/pi)
+- To use `acpx codex`, install [Codex CLI](https://codex.openai.com)
+- To use `acpx claude`, install [Claude Code](https://claude.ai/code)
+- To use `acpx openclaw`, install [OpenClaw](https://github.com/openclaw/openclaw)
+
+## Default Agent
+
+The default agent is `codex`. This means you can use the `exec` command without specifying an agent name:
+
+```bash
+# These are equivalent:
+acpx exec "summarize this repo"
+acpx codex exec "summarize this repo"
+```
+
+You can change the default agent in your configuration:
+
+```json
+{
+  "defaultAgent": "claude"
+}
+```
+
+## Custom Agent Commands
+
+You can override built-in agent commands or add custom agents in your configuration file:
+
+```json
+{
+  "agents": {
+    "my-custom": { "command": "./bin/my-acp-server" },
+    "openclaw": { "command": "node scripts/run-node.mjs acp" }
+  }
+}
+```
+
+For one-off custom commands, use the `--agent` flag:
+
+```bash
+acpx --agent "./my-custom-acp-server" "do something"
+```
+
+## Primary Agents
+
+The following agents receive primary focus in acpx documentation and examples:
+
+<CardGroup cols={2}>
+  <Card title="Pi" icon="circle" href="/agents/pi">
+    Community-driven coding agent with strong ACP integration
+  </Card>
+  <Card title="OpenClaw" icon="paw" href="/agents/openclaw">
+    Native ACP bridge with advanced session management
+  </Card>
+  <Card title="Codex" icon="code" href="/agents/codex">
+    OpenAI's Codex CLI with comprehensive tool support
+  </Card>
+  <Card title="Claude" icon="message" href="/agents/claude">
+    Anthropic's Claude Code for thoughtful refactoring
+  </Card>
+</CardGroup>
+
+## Other Supported Agents
+
+For details on other built-in agents, see the [Other Agents](/agents/other-agents) page.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Get started with acpx in minutes
+  </Card>
+  <Card title="Session Management" icon="layer-group" href="/cli/sessions">
+    Learn how sessions work across agents
+  </Card>
+  <Card title="Configuration" icon="gear" href="/guides/configuration">
+    Customize agent commands and defaults
+  </Card>
+  <Card title="Custom Agents" icon="wrench" href="/guides/custom-agents">
+    Add your own ACP-compatible agents
+  </Card>
+</CardGroup>

@@ -1,0 +1,491 @@
+---
+title: "Permission Modes"
+description: "How acpx handles permission requests for client operations with configurable approval policies"
+---
+
+## Why permissions?
+
+ACP agents request **client operations** during execution:
+
+- **File operations** - Read, write, edit, delete files
+- **Search operations** - Search file contents, find files
+- **Terminal operations** - Run shell commands
+- **Network operations** - Fetch URLs (some adapters)
+
+acpx acts as the **client** that fulfills these requests. Permission modes control which operations are auto-approved, which require confirmation, and which are denied.
+
+## Permission modes
+
+acpx supports three permission modes:
+
+| Mode | Flag | Behavior |
+|------|------|----------|
+| **Approve Reads** | `--approve-reads` | Auto-approve reads/searches, prompt for writes/commands (default) |
+| **Approve All** | `--approve-all` | Auto-approve all operations |
+| **Deny All** | `--deny-all` | Auto-deny all operations when possible |
+
+### Approve Reads (default)
+
+Balanced security for interactive use:
+
+```bash
+acpx codex "analyze the codebase"
+# Auto-approved: fs/read_file, fs/search_files
+# Requires prompt: fs/write_file, terminal/run_command
+```
+
+Auto-approved operations:
+
+- **`fs/read_file`** - Read file contents
+- **`fs/search_files`** - Search file contents with patterns
+- **`fs/list_directory`** - List directory contents
+- **Operations inferred as reads** - Based on tool title heuristics
+
+Requires confirmation:
+
+- **`fs/write_file`** - Create or overwrite files
+- **`fs/edit_file`** - Modify existing files  
+- **`fs/delete_file`** - Delete files
+- **`fs/move_file`** - Move or rename files
+- **`terminal/run_command`** - Execute shell commands
+
+<Note>
+Tool kind detection uses both the explicit `kind` field and title-based heuristics. If `kind` is missing, acpx infers from the tool title (e.g., "Read src/auth.ts" → `read`).
+</Note>
+
+### Approve All
+
+For automation and trusted environments:
+
+```bash
+acpx --approve-all codex "refactor the auth module"
+# All operations auto-approved without prompts
+```
+
+Use cases:
+
+- **CI/automation** - No interactive prompts available
+- **Trusted agents** - You fully trust the agent's decisions
+- **Scripted workflows** - Predictable, repeatable operations
+
+<Warning>
+`--approve-all` grants full access to the file system and terminal. Only use with trusted agents and in controlled environments.
+</Warning>
+
+### Deny All
+
+For read-only or explanation-only tasks:
+
+```bash
+acpx --deny-all codex "explain how authentication works"
+# All client operations denied
+# Agent can only reason about the task
+```
+
+Behavior:
+
+- Denies operations when denial option is available
+- Falls back to cancellation if no deny option exists
+- Agent sees rejected operations and can explain or provide alternative approaches
+
+Use cases:
+
+- **Dry-run analysis** - Understand what agent would do
+- **Read-only review** - Prevent accidental modifications
+- **Sandboxed exploration** - Safe experimentation
+
+## Permission request flow
+
+When an agent requests permission:
+
+### ACP protocol exchange
+
+**Agent sends:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "perm-1",
+  "method": "client/request_permission",
+  "params": {
+    "toolCall": {
+      "title": "Write src/auth.ts",
+      "kind": "edit",
+      "description": "Add token refresh logic"
+    },
+    "options": [
+      {"optionId": "allow", "kind": "allow_once"},
+      {"optionId": "deny", "kind": "reject_once"}
+    ]
+  }
+}
+```
+
+**acpx responds:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "perm-1",
+  "result": {
+    "outcome": {
+      "outcome": "selected",
+      "optionId": "allow"
+    }
+  }
+}
+```
+
+### Interactive prompt (approve-reads mode)
+
+When TTY is available and operation is not auto-approved:
+
+```bash
+acpx codex "implement feature X"
+```
+
+```
+[permission] Allow Write src/feature.ts [edit]? (y/N) y
+[permission] Allow Run npm test [execute]? (y/N) y
+```
+
+User can:
+
+- **`y`** - Approve this operation
+- **`N`** (default) - Deny this operation
+- **`Ctrl+C`** - Cancel entire prompt
+
+## Non-interactive behavior
+
+When no TTY is available (CI, background scripts):
+
+### Default policy: deny
+
+```bash
+# In CI environment (no TTY)
+acpx codex "make changes"
+# Non-read operations are auto-denied
+```
+
+### Fail policy
+
+Fail fast instead of denying:
+
+```bash
+acpx --non-interactive-permissions fail codex "make changes"
+# Exit with error: PERMISSION_PROMPT_UNAVAILABLE
+# Exit code: 5
+```
+
+Use `fail` policy when:
+
+- You want to detect missing TTY early
+- Auto-denial might mask issues
+- Explicit failure is better than silent denial
+
+<Info>
+Combine with `--approve-all` for non-interactive automation:
+
+```bash
+acpx --approve-all --non-interactive-permissions fail codex "deploy"
+```
+
+This grants all permissions but still fails on unexpected permission prompts (defensive against regressions).
+</Info>
+
+## Tool kind inference
+
+When the agent doesn't provide an explicit `kind` field, acpx infers from the tool title:
+
+```typescript
+// Source: src/permissions.ts:34-75
+
+function inferToolKind(params: RequestPermissionRequest): ToolKind | undefined {
+  const title = params.toolCall.title?.trim().toLowerCase()
+  if (!title) return undefined
+  
+  const head = title.split(":", 1)[0]?.trim()
+  
+  if (head.includes("read") || head.includes("cat")) return "read"
+  if (head.includes("search") || head.includes("find") || head.includes("grep")) return "search"
+  if (head.includes("write") || head.includes("edit") || head.includes("patch")) return "edit"
+  if (head.includes("delete") || head.includes("remove")) return "delete"
+  if (head.includes("move") || head.includes("rename")) return "move"
+  if (head.includes("run") || head.includes("execute") || head.includes("bash")) return "execute"
+  if (head.includes("fetch") || head.includes("http") || head.includes("url")) return "fetch"
+  if (head.includes("think")) return "think"
+  
+  return "other"
+}
+```
+
+Examples:
+
+- "Read src/cli/config.ts" → `read` (auto-approved in approve-reads)
+- "Write new test file" → `edit` (requires prompt)
+- "Run npm install" → `execute` (requires prompt)
+- "Search for TODO comments" → `search` (auto-approved)
+
+<Note>
+Explicit `kind` fields always take precedence over title inference. This is a fallback for adapters that don't populate `kind`.
+</Note>
+
+## Permission options
+
+Agents provide available options in the permission request:
+
+### Common option kinds
+
+| Kind | Meaning | acpx selection |
+|------|---------|----------------|
+| `allow_once` | Approve this operation once | Selected on approval |
+| `allow_always` | Approve this and future similar operations | Selected on approval (if available) |
+| `reject_once` | Deny this operation once | Selected on denial |
+| `reject_always` | Deny this and future similar operations | Selected on denial (if available) |
+
+### Option selection priority
+
+When approving:
+
+1. Prefer `allow_once` (most common)
+2. Fall back to `allow_always` if available
+3. Fall back to first option if no allow option exists
+
+When denying:
+
+1. Prefer `reject_once`
+2. Fall back to `reject_always` if available
+3. Fall back to cancellation if no deny option exists
+
+```typescript
+// Source: src/permissions.ts:21-32
+
+function pickOption(
+  options: PermissionOption[],
+  kinds: PermissionOption["kind"][]
+): PermissionOption | undefined {
+  for (const kind of kinds) {
+    const match = options.find((option) => option.kind === kind)
+    if (match) return match
+  }
+  return undefined
+}
+```
+
+## Permission statistics
+
+After a prompt completes, acpx tracks permission stats:
+
+```json
+{
+  "stopReason": "end_turn",
+  "sessionId": "019c1234...",
+  "permissionStats": {
+    "approved": 5,
+    "denied": 1,
+    "cancelled": 0
+  }
+}
+```
+
+Stats include:
+
+- **`approved`** - Operations explicitly allowed
+- **`denied`** - Operations explicitly rejected  
+- **`cancelled`** - Operations cancelled by user or system
+
+<Info>
+Permission stats are available in the `RunPromptResult` returned by `runOnce()` and `sendSession()` APIs.
+</Info>
+
+## Configuration file support
+
+Set default permission mode in config:
+
+**`~/.acpx/cli/config.json`**
+
+```json
+{
+  "defaultPermissions": "approve-all",
+  "nonInteractivePermissions": "deny"
+}
+```
+
+CLI flags override config:
+
+```bash
+# Config says approve-all, but flag overrides
+acpx --approve-reads codex "review code"
+```
+
+## Permission mode examples
+
+### Interactive code review
+
+```bash
+acpx --approve-reads codex "review auth module for security issues"
+# Auto-approves: reading files, searching codebase
+# Prompts for: any suggested fixes that modify files
+```
+
+### Automated refactoring
+
+```bash
+acpx --approve-all codex "migrate from axios to fetch API"
+# Auto-approves: all file reads, writes, test runs
+# No interactive prompts
+```
+
+### Safe exploration
+
+```bash
+acpx --deny-all codex "what would you change in this codebase?"
+# Agent can explain ideas but cannot make changes
+# Useful for understanding agent's reasoning
+```
+
+### CI validation
+
+```bash
+# Fail if unexpected permissions needed
+acpx --approve-all --non-interactive-permissions fail codex "run checks"
+```
+
+## Best practices
+
+### Choose the right mode for the task
+
+```bash
+# Analysis/review: approve-reads (default)
+acpx codex "identify performance bottlenecks"
+
+# Trusted automation: approve-all
+acpx --approve-all codex "apply prettier formatting"
+
+# Dry-run/explanation: deny-all  
+acpx --deny-all codex "explain the migration plan"
+```
+
+### Handle non-interactive environments
+
+```bash
+# Good: Explicit policy for automation
+acpx --approve-all --non-interactive-permissions fail codex "deploy"
+
+# Bad: Defaults might deny needed operations
+acpx codex "deploy"  # Fails in CI if it needs permissions
+```
+
+### Combine with session management
+
+```bash
+# Strict permissions for initial review
+acpx codex sessions new
+acpx --deny-all codex "review security risks"
+
+# Approve changes after review
+acpx --approve-all codex "apply the fixes we discussed"
+```
+
+### Monitor permission requests
+
+Enable verbose logging to see permission decisions:
+
+```bash
+acpx --verbose --approve-reads codex "refactor module"
+```
+
+```
+[acpx] permission: auto-approved read src/module.ts [read]
+[permission] Allow Write src/module.ts [edit]? (y/N) y
+[acpx] permission: user approved write src/module.ts [edit]
+```
+
+## Exit codes
+
+Permission-related exit codes:
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success (all operations approved or no permissions needed) |
+| `5` | Permission denied (at least one operation denied/cancelled) |
+
+Example:
+
+```bash
+acpx --deny-all codex "make changes"
+echo $?  # 5 (permission denied)
+
+acpx --approve-all codex "make changes"  
+echo $?  # 0 (success)
+```
+
+## Security considerations
+
+### Workspace sandboxing
+
+Client operations are scoped to the session's `cwd`:
+
+```typescript
+// Operations outside cwd are rejected
+fs/read_file { path: "../../../etc/passwd" } → denied
+fs/read_file { path: "/etc/passwd" } → denied
+fs/read_file { path: "src/auth.ts" } → evaluated by permission mode
+```
+
+<Warning>
+Terminal commands (`terminal/run_command`) are **not sandboxed** beyond cwd. Use `--deny-all` or careful approval when executing untrusted agent suggestions.
+</Warning>
+
+### Credential handling
+
+Permissions apply to agent operations, not authentication:
+
+- **Auth credentials** are passed to the agent during initialization
+- **Permission modes** control what the agent can do once authenticated
+- Configure both for defense-in-depth:
+
+```bash
+acpx --approve-reads \
+  --auth my_agent_token=secret \
+  codex "analyze codebase"
+```
+
+### Audit trail
+
+All client operations are logged to session event logs:
+
+```
+~/.acpx/events/{sessionId}/
+  2026-03-14-100523-req-1.ndjson
+  2026-03-14-100845-req-2.ndjson
+```
+
+Event logs contain:
+
+- Full ACP message history
+- Client operation requests and responses  
+- Permission request outcomes
+- Tool call details
+
+Use for audit, debugging, or replay.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Sessions" icon="arrows-rotate" href="/cli/sessions">
+    Manage session lifecycle and scoping
+  </Card>
+  
+  <Card title="Queue Management" icon="list" href="/concepts/queue-management">
+    Understand prompt queuing and concurrency
+  </Card>
+  
+  <Card title="Configuration" icon="gear" href="/guides/configuration">
+    Set default permissions in config files
+  </Card>
+  
+  <Card title="Agent Client Protocol" icon="code" href="/concepts/agent-client-protocol">
+    Learn about the underlying ACP protocol
+  </Card>
+</CardGroup>

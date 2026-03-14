@@ -1,0 +1,461 @@
+---
+title: Codex Agent
+description: Using OpenAI Codex CLI with acpx through the codex-acp adapter
+---
+
+Codex is OpenAI's coding agent accessible through the Codex CLI, wrapped for ACP compatibility by the `codex-acp` adapter from Zed Industries.
+
+## Overview
+
+- **Built-in name**: `codex`
+- **Command**: `npx @zed-industries/codex-acp`
+- **Adapter**: [codex-acp](https://github.com/zed-industries/codex-acp) (external adapter)
+- **Upstream**: [Codex CLI](https://codex.openai.com)
+- **Type**: External ACP adapter wrapping Codex CLI
+- **Default agent**: Yes (codex is the default agent in acpx)
+
+## Installation
+
+### Install Codex CLI
+
+Follow the instructions at [codex.openai.com](https://codex.openai.com) to install the Codex CLI.
+
+### Install acpx
+
+```bash
+npm install -g acpx@latest
+```
+
+The `codex-acp` adapter will be auto-downloaded via `npx` on first use.
+
+## Basic Usage
+
+Since `codex` is the default agent, you can use the shorthand `exec` command:
+
+```bash
+# These are equivalent:
+acpx exec "summarize this repo"
+acpx codex exec "summarize this repo"
+```
+
+### Create a Session
+
+```bash
+acpx codex sessions new
+```
+
+### Send a Prompt
+
+```bash
+acpx codex "fix the failing tests"
+```
+
+### One-Shot Execution
+
+```bash
+acpx codex exec "review changed files"
+```
+
+## Configuration Options
+
+Codex exposes runtime configuration through `session/set_config_option`:
+
+- **`mode`**: Agent operation mode
+- **`model`**: Model selection
+- **`reasoning_effort`**: Reasoning depth (low, medium, high)
+
+### Set Mode
+
+```bash
+acpx codex set-mode auto
+```
+
+### Set Configuration
+
+```bash
+# Set reasoning effort
+acpx codex set reasoning_effort high
+
+# Compatibility alias for thought_level
+acpx codex set thought_level high
+```
+
+<Note>
+  The `thought_level` alias is translated to `reasoning_effort` for backward compatibility with older workflows.
+</Note>
+
+## Session Management
+
+```bash
+# Create and work with sessions
+acpx codex sessions new
+acpx codex "implement user authentication"
+
+# Named sessions for parallel work
+acpx codex sessions new --name backend
+acpx codex -s backend "add database indexing"
+
+acpx codex sessions new --name frontend
+acpx codex -s frontend "optimize rendering"
+
+# Session inspection
+acpx codex sessions list
+acpx codex sessions show
+acpx codex sessions history --limit 10
+
+# Close sessions
+acpx codex sessions close
+acpx codex sessions close backend
+```
+
+## Queue Management
+
+### Async Prompts
+
+```bash
+# Queue prompt and return immediately
+acpx codex --no-wait "comprehensive code review"
+```
+
+### TTL Control
+
+```bash
+# Keep queue owner alive for 90 seconds
+acpx codex --ttl 90 "fix the bug"
+
+# Keep alive indefinitely for interactive sessions
+acpx codex --ttl 0 "interactive debugging"
+```
+
+## Prompt Input Methods
+
+### Direct String
+
+```bash
+acpx codex "analyze the error logs"
+```
+
+### From File
+
+```bash
+acpx codex --file requirements.md
+```
+
+### From stdin
+
+```bash
+echo "review this function" | acpx codex
+cat prompt.txt | acpx codex
+```
+
+### Explicit stdin with Context
+
+```bash
+cat context.md | acpx codex --file - "focus on performance"
+```
+
+## Output Formats
+
+### Text (default)
+
+```bash
+acpx codex "fix the tests"
+```
+
+Outputs:
+
+```
+[thinking] Investigating test failures
+[tool] Run npm test (running)
+[tool] Run npm test (completed)
+  output:
+    ✓ test 1 (0.2s)
+    ✗ test 2 (assertion failed)
+...
+```
+
+### JSON
+
+```bash
+acpx --format json codex exec "review code"
+```
+
+Outputs NDJSON events:
+
+```json
+{"type":"thinking","content":"Analyzing codebase..."}
+{"type":"tool_call","status":"running","title":"Read src/app.ts"}
+{"type":"tool_call","status":"completed","output":"..."}
+```
+
+### JSON-Strict
+
+```bash
+acpx --format json --json-strict codex exec "review code"
+```
+
+Suppresses non-JSON stderr output for clean machine parsing.
+
+### Quiet
+
+```bash
+acpx --format quiet codex "summarize findings"
+```
+
+Outputs only the final assistant text.
+
+## Permission Management
+
+### Auto-approve All
+
+```bash
+acpx --approve-all codex "run tests and fix failures"
+```
+
+### Auto-approve Reads (default)
+
+```bash
+acpx --approve-reads codex "analyze code structure"
+```
+
+### Deny All
+
+```bash
+acpx --deny-all codex "explain your approach"
+```
+
+### Non-Interactive Behavior
+
+```bash
+# Deny in CI/CD (default)
+acpx --non-interactive-permissions deny codex "check"
+
+# Fail for explicit error
+acpx --non-interactive-permissions fail codex "check"
+```
+
+## Session Controls
+
+### Status Check
+
+```bash
+acpx codex status
+```
+
+Outputs:
+
+```
+Status: running
+PID: 12345
+Uptime: 2m 34s
+Last prompt: "fix the tests" (32s ago)
+```
+
+### Cancel Running Prompt
+
+```bash
+# Cooperative cancel via ACP session/cancel
+acpx codex cancel
+
+# Or Ctrl+C during prompt execution
+```
+
+## Configuration
+
+### Global Config (~/.acpx/cli/config.json)
+
+```json
+{
+  "defaultAgent": "codex",
+  "defaultPermissions": "approve-all",
+  "ttl": 300,
+  "timeout": 120,
+  "format": "text"
+}
+```
+
+### Project Config (.acpxrc.json)
+
+```json
+{
+  "defaultAgent": "codex",
+  "agents": {
+    "codex": {
+      "command": "npx @zed-industries/codex-acp@latest"
+    }
+  }
+}
+```
+
+### Override Codex Command
+
+```json
+{
+  "agents": {
+    "codex": {
+      "command": "/custom/path/to/codex-acp"
+    }
+  }
+}
+```
+
+## Practical Examples
+
+### Test Fixing Workflow
+
+```bash
+# Create test session
+acpx codex sessions new
+
+# Run and fix tests
+acpx --approve-all codex "find and fix all failing tests"
+
+# Review history
+acpx codex sessions history
+```
+
+### Code Review
+
+```bash
+# Create PR review session
+acpx codex sessions new --name pr-review
+
+# Review with context file
+acpx codex -s pr-review --file pr-context.md
+
+# Follow-up questions
+acpx codex -s pr-review "check for security issues"
+acpx codex -s pr-review "suggest performance improvements"
+```
+
+### Refactoring
+
+```bash
+# Start refactor session with high reasoning
+acpx codex sessions new --name refactor
+acpx codex set-mode auto
+acpx codex set reasoning_effort high
+
+# Execute refactor
+acpx --approve-all codex -s refactor "refactor auth module for testability"
+```
+
+### CI/CD Integration
+
+```bash
+#!/bin/bash
+# ci-review.sh
+
+acpx --format json \
+  --json-strict \
+  --non-interactive-permissions fail \
+  --approve-reads \
+  --timeout 300 \
+  codex exec "review changed files for issues" \
+  | jq -r 'select(.type=="result") | .content'
+```
+
+## Advanced Workflows
+
+### Multi-Session Development
+
+```bash
+# Backend work
+acpx codex sessions new --name api
+acpx codex -s api "implement REST endpoints"
+
+# Frontend work
+acpx codex sessions new --name ui
+acpx codex -s ui "create dashboard components"
+
+# Testing
+acpx codex sessions new --name tests
+acpx codex -s tests "write integration tests"
+```
+
+### Automation Pipeline
+
+```bash
+# Stage 1: Analysis
+acpx codex exec "analyze codebase structure" > analysis.txt
+
+# Stage 2: Planning
+acpx codex sessions new --name planning
+acpx codex -s planning --file analysis.txt "create refactor plan"
+
+# Stage 3: Execution
+acpx codex sessions new --name execution
+acpx --approve-all codex -s execution --file plan.md
+```
+
+## Troubleshooting
+
+### Codex CLI Not Found
+
+Install Codex CLI:
+
+```bash
+# Follow instructions at codex.openai.com
+codex --version
+```
+
+### Adapter Issues
+
+Manually install adapter:
+
+```bash
+npm install -g @zed-industries/codex-acp@latest
+```
+
+### Session Not Found
+
+Create or ensure session:
+
+```bash
+acpx codex sessions ensure
+```
+
+### Configuration Not Applied
+
+Check config resolution:
+
+```bash
+acpx config show
+```
+
+### Timeout Issues
+
+Increase timeout:
+
+```bash
+acpx --timeout 300 codex "long-running task"
+```
+
+## Comparison with Direct Codex CLI
+
+| Feature | Direct Codex CLI | acpx codex |
+|---------|------------------|------------|
+| Protocol | Native Codex | ACP (standardized) |
+| Sessions | Limited | Full lifecycle management |
+| Queueing | No | Built-in prompt queue |
+| Named Sessions | No | Yes |
+| JSON Output | Custom format | Standard ACP events |
+| Multi-turn | Basic | Advanced with history |
+| Orchestration | Manual | First-class support |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Session Workflows" icon="diagram-project" href="/guides/session-workflows">
+    Master advanced session patterns
+  </Card>
+  <Card title="Output Formats" icon="file-code" href="/guides/output-formats">
+    Parse and process JSON output
+  </Card>
+  <Card title="Queue Management" icon="list" href="/concepts/queue-management">
+    Understand queue behavior and TTL
+  </Card>
+  <Card title="Other Agents" icon="users" href="/agents/overview">
+    Explore other built-in agents
+  </Card>
+</CardGroup>

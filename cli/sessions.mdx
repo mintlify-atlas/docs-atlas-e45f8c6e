@@ -1,0 +1,462 @@
+---
+title: "sessions"
+description: "Manage persistent ACP session lifecycle"
+---
+
+## Overview
+
+The `sessions` command manages the lifecycle of persistent ACP sessions. Sessions are scoped by agent command, working directory, and optional name, allowing for parallel workflows and long-running conversations.
+
+## Syntax
+
+```bash
+acpx [global_options] <agent> sessions [subcommand]
+acpx [global_options] sessions [subcommand]  # defaults to codex
+```
+
+## Subcommands
+
+- `list` - List all sessions for the agent (default when no subcommand given)
+- `new` - Create a fresh session
+- `ensure` - Get existing session or create if missing
+- `close` - Soft-close a session
+- `show` - Display session metadata
+- `history` - Show conversation history
+
+## sessions list
+
+List all saved sessions for the selected agent command.
+
+### Syntax
+
+```bash
+acpx <agent> sessions
+acpx <agent> sessions list
+```
+
+### Behavior
+
+- Returns all saved sessions for selected `agentCommand` (across all cwd values)
+- Both `sessions` and `sessions list` are equivalent
+- Sessions marked as closed include a `[closed]` marker
+
+### Output
+
+**Text format**: Tab-separated `id`, `name`, `cwd`, `lastUsedAt`
+
+```
+abc123	-	/home/user/project	2026-03-14T10:30:00Z
+def456	backend	/home/user/project	2026-03-14T11:00:00Z [closed]
+```
+
+**JSON format**: Array of session records
+
+```json
+[
+  {
+    "acpxRecordId": "abc123",
+    "name": null,
+    "cwd": "/home/user/project",
+    "lastUsedAt": "2026-03-14T10:30:00Z",
+    "closed": false
+  }
+]
+```
+
+**Quiet format**: One session id per line
+
+```
+abc123
+def456 [closed]
+```
+
+### Example
+
+```bash
+acpx codex sessions
+acpx pi sessions list
+```
+
+## sessions new
+
+Create a fresh session for the current working directory.
+
+### Syntax
+
+```bash
+acpx <agent> sessions new
+acpx <agent> sessions new --name <name>
+```
+
+### Options
+
+<ParamField path="--name" type="string">
+  Session name for parallel workflows. Creates a named session instead of the default cwd-scoped session.
+</ParamField>
+
+<ParamField path="--resume-session" type="string">
+  Resume existing ACP session id from a previous session. Advanced option for session migration.
+</ParamField>
+
+### Behavior
+
+- Creates a fresh cwd-scoped session (default or named)
+- If a session already exists in that scope, soft-closes it before creating the new one
+- Starts the agent and calls `session/new` (or `session/load` if `--resume-session` is provided)
+- Writes session record to `~/.acpx/sessions/`
+
+### Example
+
+```bash
+# Create default session
+acpx codex sessions new
+
+# Create named session
+acpx codex sessions new --name backend
+acpx codex sessions new --name frontend
+
+# Different agent
+acpx pi sessions new --name review
+```
+
+## sessions ensure
+
+Idempotent "get-or-create" operation for sessions.
+
+### Syntax
+
+```bash
+acpx <agent> sessions ensure
+acpx <agent> sessions ensure --name <name>
+```
+
+### Options
+
+<ParamField path="--name" type="string">
+  Session name. Ensures a named session exists.
+</ParamField>
+
+<ParamField path="--resume-session" type="string">
+  Resume existing ACP session id (used only if creating new session).
+</ParamField>
+
+### Behavior
+
+- Searches for an existing active session matching `(agentCommand, cwd, name?)`
+- If found, returns that session
+- If not found, creates a new session (same as `sessions new`)
+- Uses directory-walk routing (up to git root) to find nearest matching session
+
+### Example
+
+```bash
+# Ensure default session exists
+acpx codex sessions ensure
+
+# Ensure named session exists
+acpx codex sessions ensure --name docs
+```
+
+## sessions close
+
+Soft-close a session.
+
+### Syntax
+
+```bash
+acpx <agent> sessions close
+acpx <agent> sessions close <name>
+```
+
+### Behavior
+
+- Soft-closes the current cwd-scoped session (default or named)
+- Marks session as `closed: true` with `closedAt` timestamp
+- Terminates queue owner and agent processes
+- Keeps session record and history on disk
+- Auto-resume ignores closed sessions during scope lookup
+- Errors if target session does not exist
+
+<Note>
+Closed sessions remain on disk and can be inspected with `sessions show` using the `includeClosed` flag.
+</Note>
+
+### Example
+
+```bash
+# Close default session
+acpx codex sessions close
+
+# Close named session
+acpx codex sessions close backend
+```
+
+## sessions show
+
+Display detailed metadata for a session.
+
+### Syntax
+
+```bash
+acpx <agent> sessions show
+acpx <agent> sessions show <name>
+```
+
+### Behavior
+
+- Shows stored session metadata for current cwd (default or named)
+- Includes closed sessions
+- Errors if session does not exist
+
+### Output
+
+**Text format**: Key-value pairs
+
+```
+id: abc123
+sessionId: session-xyz
+agentSessionId: agent-abc
+agent: npx @zed-industries/codex-acp
+cwd: /home/user/project
+name: backend
+created: 2026-03-14T10:00:00Z
+lastActivity: 2026-03-14T10:30:00Z
+lastPrompt: 2026-03-14T10:25:00Z
+closed: no
+closedAt: -
+pid: 12345
+agentStartedAt: 2026-03-14T10:00:01Z
+lastExitCode: -
+lastExitSignal: -
+lastExitAt: -
+disconnectReason: -
+historyEntries: 5
+```
+
+**JSON format**: Full session record object
+
+```json
+{
+  "acpxRecordId": "abc123",
+  "acpSessionId": "session-xyz",
+  "agentSessionId": "agent-abc",
+  "agentCommand": "npx @zed-industries/codex-acp",
+  "cwd": "/home/user/project",
+  "name": "backend",
+  "createdAt": "2026-03-14T10:00:00Z",
+  "lastUsedAt": "2026-03-14T10:30:00Z",
+  "lastPromptAt": "2026-03-14T10:25:00Z",
+  "closed": false,
+  "closedAt": null,
+  "pid": 12345
+}
+```
+
+**Quiet format**: Session id only
+
+```
+abc123
+```
+
+### Example
+
+```bash
+# Show default session
+acpx codex sessions show
+
+# Show named session
+acpx codex sessions show backend
+
+# JSON output
+acpx --format json codex sessions show
+```
+
+## sessions history
+
+Display conversation history previews.
+
+### Syntax
+
+```bash
+acpx <agent> sessions history
+acpx <agent> sessions history <name>
+acpx <agent> sessions history <name> --limit <count>
+```
+
+### Options
+
+<ParamField path="--limit" type="number" default="20">
+  Maximum number of entries to show. Default is 20. Use `0` to show all entries.
+</ParamField>
+
+### Behavior
+
+- Shows lightweight turn history previews from session metadata
+- Each turn includes `role`, `timestamp`, and `textPreview`
+- Limit controls how many recent entries are shown (default 20)
+- Includes closed sessions
+
+### Output
+
+**Text format**: Tab-separated `timestamp`, `role`, `textPreview`
+
+```
+session: abc123 (5/5 shown)
+2026-03-14T10:15:00Z	user	fix the failing tests
+2026-03-14T10:16:00Z	assistant	Investigating test failures...
+2026-03-14T10:18:00Z	assistant	Fixed: added await to setup hook
+```
+
+**JSON format**: Object with entries array
+
+```json
+{
+  "id": "abc123",
+  "sessionId": "session-xyz",
+  "limit": 20,
+  "count": 5,
+  "entries": [
+    {
+      "role": "user",
+      "timestamp": "2026-03-14T10:15:00Z",
+      "textPreview": "fix the failing tests"
+    }
+  ]
+}
+```
+
+**Quiet format**: Text previews only
+
+```
+fix the failing tests
+Investigating test failures...
+Fixed: added await to setup hook
+```
+
+### Example
+
+```bash
+# Show last 20 entries (default)
+acpx codex sessions history
+
+# Show last 10 entries
+acpx codex sessions history --limit 10
+
+# Show all entries
+acpx codex sessions history --limit 0
+
+# Named session
+acpx codex sessions history backend --limit 5
+```
+
+## Session Storage
+
+Session records are stored in:
+
+```
+~/.acpx/sessions/*.json
+```
+
+Each session file contains:
+- Session metadata (id, agent, cwd, name, timestamps)
+- Agent process info (pid, exit codes, uptime)
+- Lightweight turn history previews
+- Closed status and timestamps
+
+## Session Scoping
+
+Sessions are scoped by:
+
+1. **Agent command**: Each agent has separate sessions
+2. **Working directory**: Sessions are per-project (up to git root)
+3. **Optional name**: Named sessions for parallel workflows
+
+Scope key: `(agentCommand, cwd, name?)`
+
+### Directory-Walk Routing
+
+When looking up sessions:
+
+1. Detect nearest git root by checking for `.git` while walking up from `absoluteCwd`
+2. If git root found, walk from `absoluteCwd` up to git root (inclusive)
+3. If no git root, only check exact `absoluteCwd` (no parent walk)
+4. Return first active (non-closed) session matching scope
+
+This allows sessions created in subdirectories to be reused from parent directories within the same repo.
+
+## Common Workflows
+
+### Single Session per Repo
+
+```bash
+# Create session once
+acpx codex sessions new
+
+# Use it for all prompts
+acpx codex "fix tests"
+acpx codex "update docs"
+
+# Check history
+acpx codex sessions history
+
+# Close when done
+acpx codex sessions close
+```
+
+### Parallel Named Sessions
+
+```bash
+# Backend work
+acpx codex sessions new --name backend
+acpx codex -s backend "optimize queries"
+acpx codex -s backend "add caching"
+
+# Frontend work (in parallel)
+acpx codex sessions new --name frontend
+acpx codex -s frontend "improve loading states"
+
+# List all sessions
+acpx codex sessions
+
+# Close both when done
+acpx codex sessions close backend
+acpx codex sessions close frontend
+```
+
+### PR Review Workflow
+
+```bash
+# Create dedicated session
+acpx codex sessions new --name pr-842
+
+# Review
+acpx codex -s pr-842 "Review PR #842 for issues"
+
+# Iterate
+acpx codex -s pr-842 "Now propose a fix"
+acpx codex -s pr-842 "Draft tests for the fix"
+
+# Check conversation
+acpx codex sessions history pr-842
+
+# Close when merged
+acpx codex sessions close pr-842
+```
+
+### Ensure Pattern (Idempotent)
+
+```bash
+# Safe to run multiple times
+acpx codex sessions ensure --name docs
+acpx codex -s docs "update README"
+
+# Run again later (reuses existing session)
+acpx codex sessions ensure --name docs
+acpx codex -s docs "add examples"
+```
+
+## See Also
+
+- [prompt](/cli/prompt) - Send prompts to persistent sessions
+- [status](/cli/status) - Check session process status
+- [Overview](/cli/overview) - CLI grammar and session scoping

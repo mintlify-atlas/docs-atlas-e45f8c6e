@@ -1,0 +1,409 @@
+---
+title: 'Session Workflows'
+description: 'Master session management for persistent multi-turn conversations'
+icon: 'layer-group'
+---
+
+## Understanding Sessions
+
+Sessions in acpx provide persistent, multi-turn conversations that survive across CLI invocations. Each session is scoped to:
+
+- **Agent command** (e.g., `codex`, `pi`, `claude`)
+- **Working directory** (with git root-aware routing)
+- **Optional session name** (for parallel workstreams)
+
+## Session Lifecycle
+
+<Steps>
+  <Step title="Create a session">
+    Create a new session for your current directory:
+    
+    ```bash
+    acpx codex sessions new
+    ```
+  </Step>
+
+  <Step title="Send prompts">
+    Prompts automatically use the session in your current directory:
+    
+    ```bash
+    acpx codex "fix the auth tests"
+    acpx codex "now update the documentation"
+    ```
+  </Step>
+
+  <Step title="Check status">
+    View the current session's process status:
+    
+    ```bash
+    acpx codex status
+    ```
+  </Step>
+
+  <Step title="Close when done">
+    Soft-close the session (keeps history on disk):
+    
+    ```bash
+    acpx codex sessions close
+    ```
+  </Step>
+</Steps>
+
+## Session Commands
+
+### Create Sessions
+
+#### New Session
+
+Create a fresh session for the current directory:
+
+```bash
+acpx codex sessions new
+```
+
+This will soft-close any existing default session in the same scope.
+
+#### Named Session
+
+Create a named session for parallel workstreams:
+
+```bash
+acpx codex sessions new --name api
+```
+
+#### Ensure Session
+
+Idempotent session creation - returns existing or creates new:
+
+```bash
+acpx codex sessions ensure
+acpx codex sessions ensure --name docs
+```
+
+### List Sessions
+
+View all sessions for the current agent:
+
+```bash
+acpx codex sessions
+# or explicitly
+acpx codex sessions list
+```
+
+Output format:
+```
+session-id-1    default    /home/user/project    2026-03-14T10:30:00Z
+session-id-2    api        /home/user/project    2026-03-14T09:15:00Z [closed]
+```
+
+### Inspect Sessions
+
+Show detailed metadata for the current session:
+
+```bash
+acpx codex sessions show
+```
+
+For named sessions:
+
+```bash
+acpx codex sessions show api
+```
+
+### View History
+
+Display recent conversation history:
+
+```bash
+acpx codex sessions history
+```
+
+Limit the number of turns shown:
+
+```bash
+acpx codex sessions history --limit 10
+```
+
+For named sessions:
+
+```bash
+acpx codex sessions history api --limit 5
+```
+
+### Close Sessions
+
+Soft-close the default session:
+
+```bash
+acpx codex sessions close
+```
+
+Close a named session:
+
+```bash
+acpx codex sessions close api
+```
+
+<Note>
+Soft-closing keeps the session record and history on disk. The queue owner and processes are terminated, but you can still view history.
+</Note>
+
+## Named Sessions for Parallel Work
+
+Named sessions let you work on multiple tasks in the same repository:
+
+### Create Parallel Sessions
+
+```bash
+# Create session for backend work
+acpx codex sessions new --name backend
+
+# Create session for documentation
+acpx codex sessions new --name docs
+```
+
+### Work in Different Sessions
+
+```bash
+# Work on backend
+acpx codex -s backend "fix checkout timeout"
+
+# Switch to docs work
+acpx codex -s docs "document payment retry behavior"
+
+# Continue backend work
+acpx codex -s backend "add retry logic to checkout"
+```
+
+### Real-World Example
+
+```bash
+# Set up parallel PR review sessions
+acpx codex sessions new --name pr-842
+acpx codex sessions new --name pr-851
+
+# Review first PR
+acpx --cwd ~/repos/shop codex -s pr-842 \
+  'Review PR #842 for regressions and propose a minimal fix'
+
+# Review second PR in parallel
+acpx --cwd ~/repos/shop codex -s pr-851 \
+  'Review PR #851 for security issues'
+
+# Continue PR-842 work
+acpx codex -s pr-842 \
+  'Now draft commit message and rollout checklist'
+```
+
+## Session Scoping and Routing
+
+### Git Root-Aware Routing
+
+Sessions use intelligent directory-based routing:
+
+1. acpx detects the nearest git root by walking up from your current directory
+2. It searches from your current directory up to the git root (inclusive)
+3. It finds the first active session matching `(agent, directory, optional-name)`
+4. If no git root exists, it only checks the exact current directory
+
+### Example Routing
+
+```bash
+# Project structure:
+# ~/repos/myapp/          (git root)
+# ~/repos/myapp/src/
+# ~/repos/myapp/src/api/
+
+# Create session at root
+cd ~/repos/myapp
+acpx codex sessions new
+
+# This works from subdirectories
+cd ~/repos/myapp/src/api
+acpx codex "review this module"  # Uses session at ~/repos/myapp
+```
+
+### CWD Override
+
+Override the working directory:
+
+```bash
+acpx --cwd ~/repos/backend codex sessions new
+acpx --cwd ~/repos/backend codex "review recent changes"
+```
+
+## Prompt Queueing
+
+When a prompt is already running, new prompts are queued:
+
+### Queue Behavior
+
+```bash
+# Terminal 1: Long-running task
+acpx codex "run full test suite and fix all failures"
+
+# Terminal 2: Queue another prompt
+acpx codex "after tests, update changelog"  # Waits for first to complete
+
+# Terminal 3: Queue without waiting
+acpx codex --no-wait "draft release notes"  # Returns immediately
+```
+
+### Queue Owner TTL
+
+Queue owners stay alive for follow-up work:
+
+```bash
+# Default 300s (5 minute) TTL
+acpx codex "fix the tests"
+
+# Custom TTL (30 seconds)
+acpx --ttl 30 codex "quick syntax fix"
+
+# Infinite TTL (stays alive until manually stopped)
+acpx --ttl 0 codex "interactive debugging session"
+```
+
+## Canceling Prompts
+
+Send a cooperative cancel to running prompts:
+
+```bash
+acpx codex cancel
+```
+
+For named sessions:
+
+```bash
+acpx codex cancel -s api
+```
+
+If no prompt is running, you'll see:
+```
+nothing to cancel
+```
+
+<Note>
+Canceling sends ACP `session/cancel` through queue-owner IPC. It's cooperative - the agent decides how to respond.
+</Note>
+
+## Session Configuration
+
+### Set Mode
+
+Change the agent's operating mode:
+
+```bash
+acpx codex set-mode auto
+```
+
+<Warning>
+Mode values are adapter-defined. Unsupported modes are rejected by the agent (often as `Invalid params`).
+</Warning>
+
+### Set Config Options
+
+Update session configuration:
+
+```bash
+acpx codex set thought_level high
+```
+
+These commands route through queue-owner IPC when active, or reconnect directly when no owner is running.
+
+## Session Status
+
+Check local process status:
+
+```bash
+acpx codex status
+```
+
+Status includes:
+- Running state (`running`, `dead`, or `no-session`)
+- Session ID and agent command
+- Process ID when running
+- Uptime for running processes
+- Last prompt timestamp
+- Exit code/signal when dead
+
+### Example Output
+
+```
+status: running
+sessionId: 019c1234-5678-9abc-def0-123456789abc
+agentCommand: npx @zed-industries/codex-acp@^0.9.5
+pid: 12345
+uptime: 2m 15s
+lastPrompt: 2026-03-14T10:30:00Z
+```
+
+## Crash Recovery
+
+If an agent process dies, acpx automatically handles recovery:
+
+1. Detects dead process on next prompt
+2. Respawns the agent
+3. Attempts `session/load` to restore state
+4. Falls back to `session/new` if loading fails
+
+This happens transparently - you don't need to manually restart sessions.
+
+## One-Shot Mode
+
+For tasks that don't need persistent sessions:
+
+```bash
+acpx codex exec "what does this repo do?"
+```
+
+`exec` creates a temporary session and doesn't save history.
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use named sessions for parallel work">
+    When working on multiple features or reviews in the same repo, create named sessions:
+    
+    ```bash
+    acpx codex sessions new --name feature-x
+    acpx codex sessions new --name bugfix-y
+    ```
+  </Accordion>
+
+  <Accordion title="Use exec for one-off questions">
+    Don't clutter your session history with quick queries:
+    
+    ```bash
+    acpx codex exec "summarize this file"
+    ```
+  </Accordion>
+
+  <Accordion title="Close sessions when switching contexts">
+    Clean up when moving to different work:
+    
+    ```bash
+    acpx codex sessions close
+    acpx codex sessions new
+    ```
+  </Accordion>
+
+  <Accordion title="Check status when debugging">
+    If prompts aren't working, check the session status:
+    
+    ```bash
+    acpx codex status
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Output Formats" icon="file-code" href="/guides/output-formats">
+    Learn about JSON and quiet modes for automation
+  </Card>
+  <Card title="Configuration" icon="gear" href="/guides/configuration">
+    Configure default behaviors and permissions
+  </Card>
+</CardGroup>

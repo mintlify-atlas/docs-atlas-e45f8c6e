@@ -1,0 +1,382 @@
+---
+title: OpenClaw Agent
+description: Using OpenClaw's native ACP bridge with acpx
+---
+
+OpenClaw provides native ACP support through its built-in `acp` command, offering advanced session management and gateway integration.
+
+## Overview
+
+- **Built-in name**: `openclaw`
+- **Command**: `openclaw acp`
+- **Type**: Native ACP support (built-in bridge)
+- **Upstream**: [OpenClaw](https://github.com/openclaw/openclaw)
+- **Special features**: Gateway token support, advanced session routing
+
+## Installation
+
+### Install OpenClaw
+
+Follow the installation instructions at [github.com/openclaw/openclaw](https://github.com/openclaw/openclaw).
+
+### Install acpx
+
+```bash
+npm install -g acpx@latest
+```
+
+No additional adapters needed - OpenClaw has native ACP support.
+
+## Basic Usage
+
+### Create a Session
+
+```bash
+acpx openclaw sessions new
+```
+
+### Send a Prompt
+
+```bash
+acpx openclaw "implement user authentication"
+```
+
+### One-Shot Execution
+
+```bash
+acpx openclaw exec "summarize this codebase"
+```
+
+## Native ACP Bridge
+
+OpenClaw's `acp` command provides a native bridge to the Agent Client Protocol:
+
+```bash
+# Direct OpenClaw ACP invocation
+openclaw acp --url ws://127.0.0.1:18789 --token-file ~/.openclaw/gateway.token
+
+# acpx wraps this automatically
+acpx openclaw "review the changes"
+```
+
+## Session Management
+
+OpenClaw supports all standard acpx session operations:
+
+```bash
+# Create and work with sessions
+acpx openclaw sessions new
+acpx openclaw "add rate limiting to API"
+
+# Named sessions for parallel workflows
+acpx openclaw sessions new --name api-work
+acpx openclaw -s api-work "implement pagination"
+
+acpx openclaw sessions new --name frontend
+acpx openclaw -s frontend "update component library"
+
+# Session inspection
+acpx openclaw sessions list
+acpx openclaw sessions show
+acpx openclaw sessions history
+
+# Close sessions
+acpx openclaw sessions close
+acpx openclaw sessions close api-work
+```
+
+## Gateway Integration
+
+OpenClaw can connect to a gateway server for advanced orchestration:
+
+### Configuration with Gateway Token
+
+Create `~/.acpx/cli/config.json`:
+
+```json
+{
+  "agents": {
+    "openclaw": {
+      "command": "openclaw acp --url ws://127.0.0.1:18789 --token-file ~/.openclaw/gateway.token --session agent:main:main"
+    }
+  }
+}
+```
+
+### Environment Variables
+
+Suppress banners and notes for cleaner output:
+
+```json
+{
+  "agents": {
+    "openclaw": {
+      "command": "env OPENCLAW_HIDE_BANNER=1 OPENCLAW_SUPPRESS_NOTES=1 openclaw acp"
+    }
+  }
+}
+```
+
+## Development Workflow
+
+For local OpenClaw development:
+
+### Local Checkout Configuration
+
+```json
+{
+  "agents": {
+    "openclaw": {
+      "command": "env OPENCLAW_HIDE_BANNER=1 OPENCLAW_SUPPRESS_NOTES=1 node scripts/run-node.mjs acp --url ws://127.0.0.1:18789 --token-file ~/.openclaw/gateway.token --session agent:main:main"
+    }
+  }
+}
+```
+
+This runs the ACP bridge directly from your local OpenClaw repository without pnpm wrapper noise.
+
+## Session Controls
+
+```bash
+# Check session status
+acpx openclaw status
+
+# Cancel running prompt
+acpx openclaw cancel
+
+# Set agent mode
+acpx openclaw set-mode auto
+
+# Set configuration option
+acpx openclaw set thought_level high
+```
+
+## Queue Management
+
+### Async Prompt Submission
+
+```bash
+# Queue prompt without waiting
+acpx openclaw --no-wait "generate comprehensive tests"
+```
+
+### Queue Owner TTL
+
+```bash
+# Keep queue owner alive for follow-ups
+acpx openclaw --ttl 120 "implement feature"
+
+# Keep alive indefinitely
+acpx openclaw --ttl 0 "long-running refactor"
+```
+
+## Output Formats
+
+### Text Mode (default)
+
+```bash
+acpx openclaw "review the PR"
+```
+
+Outputs human-readable stream with tool updates.
+
+### JSON Mode
+
+```bash
+# NDJSON events for automation
+acpx --format json openclaw exec "review code"
+
+# JSON-strict mode (no stderr noise)
+acpx --format json --json-strict openclaw exec "review code"
+```
+
+### Quiet Mode
+
+```bash
+# Final assistant text only
+acpx --format quiet openclaw "summarize findings"
+```
+
+## Permission Management
+
+```bash
+# Auto-approve all operations
+acpx --approve-all openclaw "fix failing tests"
+
+# Auto-approve reads only (default)
+acpx --approve-reads openclaw "analyze structure"
+
+# Deny all operations
+acpx --deny-all openclaw "explain approach"
+
+# Non-interactive behavior
+acpx --non-interactive-permissions fail openclaw "CI check"
+```
+
+## Advanced Features
+
+### Multi-Repository Workflows
+
+```bash
+# Work on different repos with named sessions
+acpx --cwd ~/repos/backend openclaw -s backend "add logging"
+acpx --cwd ~/repos/frontend openclaw -s frontend "update UI"
+acpx --cwd ~/repos/shared openclaw -s shared "refactor types"
+```
+
+### Orchestration Integration
+
+OpenClaw with acpx is designed for orchestrator integration:
+
+```bash
+# Use ensure for idempotent session creation
+acpx openclaw sessions ensure
+
+# JSON output for machine consumption
+acpx --format json --json-strict openclaw exec "analyze"
+```
+
+### Discord Thread Integration
+
+OpenClaw can route Discord thread messages to ACP sessions via acpx:
+
+```bash
+# Create session for Discord thread
+acpx openclaw sessions new --name discord-thread-123
+
+# Route messages
+acpx openclaw -s discord-thread-123 "user message from thread"
+```
+
+## Practical Examples
+
+### Code Review with Gateway
+
+```bash
+# Create PR review session
+acpx openclaw sessions new --name pr-456
+
+# Review with full permissions
+acpx --approve-all openclaw -s pr-456 "Review PR #456 for regressions and propose fixes"
+```
+
+### Parallel Feature Development
+
+```bash
+# Backend feature
+acpx openclaw sessions new --name auth-feature
+acpx openclaw -s auth-feature "implement OAuth2 flow"
+
+# Frontend integration
+acpx openclaw sessions new --name auth-ui
+acpx openclaw -s auth-ui "create login UI components"
+```
+
+### CI/CD Integration
+
+```bash
+# Use in CI with strict error handling
+acpx --format json \
+  --json-strict \
+  --non-interactive-permissions fail \
+  --approve-all \
+  openclaw exec "run security audit"
+```
+
+## Configuration Examples
+
+### Minimal Configuration
+
+```json
+{
+  "defaultAgent": "openclaw"
+}
+```
+
+### Full Configuration
+
+```json
+{
+  "defaultAgent": "openclaw",
+  "defaultPermissions": "approve-all",
+  "nonInteractivePermissions": "deny",
+  "ttl": 300,
+  "format": "text",
+  "agents": {
+    "openclaw": {
+      "command": "env OPENCLAW_HIDE_BANNER=1 openclaw acp --url ws://127.0.0.1:18789 --token-file ~/.openclaw/gateway.token"
+    }
+  }
+}
+```
+
+## Troubleshooting
+
+### OpenClaw Not Found
+
+Ensure OpenClaw is installed and in your PATH:
+
+```bash
+openclaw --version
+```
+
+### Gateway Connection Issues
+
+Verify gateway is running and token file exists:
+
+```bash
+ls -la ~/.openclaw/gateway.token
+netstat -an | grep 18789
+```
+
+### Session State Issues
+
+Reset session if corrupted:
+
+```bash
+acpx openclaw sessions close
+acpx openclaw sessions new
+```
+
+### Permission Errors
+
+If operations are denied, check permission mode:
+
+```bash
+# Use approve-all for full access
+acpx --approve-all openclaw "operation requiring permissions"
+```
+
+## Architecture Notes
+
+### ACP Bridge Design
+
+OpenClaw's ACP bridge:
+
+- Exposes native `openclaw acp` command
+- Supports gateway URL and token authentication
+- Provides session routing (`--session agent:main:main`)
+- Integrates with OpenClaw's internal session management
+
+### Integration Points
+
+- **Gateway Server**: WebSocket connection for distributed orchestration
+- **Token Authentication**: File-based token for secure gateway access
+- **Session Routing**: Named session paths for multi-agent coordination
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Architecture" icon="sitemap" href="/advanced/architecture">
+    Learn about acpx architecture and OpenClaw integration
+  </Card>
+  <Card title="Orchestration" icon="diagram-project" href="/advanced/orchestration">
+    Build orchestrators with OpenClaw and acpx
+  </Card>
+  <Card title="Queue IPC" icon="network-wired" href="/advanced/queue-ipc">
+    Deep dive into queue IPC behavior
+  </Card>
+  <Card title="Sessions" icon="layer-group" href="/cli/sessions">
+    Session lifecycle and management
+  </Card>
+</CardGroup>

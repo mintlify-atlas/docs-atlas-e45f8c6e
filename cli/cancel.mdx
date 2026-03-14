@@ -1,0 +1,287 @@
+---
+title: "cancel"
+description: "Cooperatively cancel running prompts"
+---
+
+## Overview
+
+The `cancel` command sends a cooperative cancel request to a running prompt via queue-owner IPC. It uses the ACP `session/cancel` method to request graceful cancellation without tearing down session state.
+
+## Syntax
+
+```bash
+acpx [global_options] <agent> cancel [-s <name>]
+acpx [global_options] cancel [-s <name>]  # defaults to codex
+```
+
+## Behavior
+
+1. **Checks for Running Prompt**: Looks for an active queue owner for the session
+2. **Sends Cancel Request**: If a prompt is running, sends `session/cancel` via IPC
+3. **No-Op When Idle**: If no prompt is running, prints `nothing to cancel` and exits success
+4. **Preserves Session**: Does not terminate the session or queue owner, just cancels the current turn
+
+<Note>
+Cancel is cooperative. The agent must support `session/cancel` and respect the cancellation. Some agents may ignore cancel requests or complete the current operation before stopping.
+</Note>
+
+## Options
+
+<ParamField path="-s, --session" type="string">
+  Use named session instead of cwd default.
+</ParamField>
+
+## Session Scoping
+
+Cancel uses the same session routing as `prompt`:
+
+- Searches for session matching `(agentCommand, cwd, name?)`
+- Uses directory-walk routing up to git root
+- Only operates on active (non-closed) sessions
+
+If no session is found, prints `nothing to cancel` and exits success.
+
+## Output
+
+### Text Format (Default)
+
+**Prompt running**:
+
+```
+cancel requested
+```
+
+**No prompt running**:
+
+```
+nothing to cancel
+```
+
+### JSON Format
+
+**Prompt running**:
+
+```json
+{
+  "action": "cancel_result",
+  "acpxRecordId": "abc123",
+  "cancelled": true
+}
+```
+
+**No prompt running**:
+
+```json
+{
+  "action": "cancel_result",
+  "acpxRecordId": "",
+  "cancelled": false
+}
+```
+
+### Quiet Format
+
+**Prompt running**: (empty output)
+
+**No prompt running**: (empty output)
+
+## Examples
+
+### Basic Usage
+
+```bash
+# Cancel running prompt in default session
+acpx codex cancel
+
+# Cancel in named session
+acpx codex cancel -s backend
+
+# Different agent
+acpx pi cancel
+```
+
+### During Long-Running Prompt
+
+```bash
+# Terminal 1: send long-running prompt
+acpx codex "run full test suite and analyze all failures"
+
+# Terminal 2: cancel it
+acpx codex cancel
+# Output: cancel requested
+
+# Terminal 1 output:
+# [thinking] Analyzing test results...
+# [cancelled] Prompt was cancelled by user
+# [done] cancelled
+```
+
+### No Active Prompt
+
+```bash
+# No prompt running
+acpx codex cancel
+# Output: nothing to cancel
+
+# Exit code 0 (success)
+echo $?
+# Output: 0
+```
+
+### Named Session
+
+```bash
+# Cancel specific named session
+acpx codex cancel -s backend
+
+# While another session is running
+acpx codex cancel -s frontend
+```
+
+### JSON Automation
+
+```bash
+# Cancel and check result
+RESULT=$(acpx --format json codex cancel | jq -r '.cancelled')
+
+if [ "$RESULT" = "true" ]; then
+  echo "Prompt was cancelled"
+else
+  echo "No prompt to cancel"
+fi
+```
+
+## Cancel vs Ctrl+C
+
+| Method | Behavior |
+|--------|-------|
+| `acpx cancel` | Sends `session/cancel` via IPC to running queue owner |
+| `Ctrl+C` in terminal | Sends `session/cancel`, waits briefly, then force-kills if needed |
+
+**Cancel** is for programmatic cancellation from another terminal or script.
+
+**Ctrl+C** is for interactive cancellation in the same terminal where the prompt is running.
+
+Both methods send the same ACP `session/cancel` request. The difference is that Ctrl+C also handles cleanup if the agent doesn't respond.
+
+## Graceful Cancel Flow
+
+When cancel is requested:
+
+1. acpx sends `session/cancel` JSON-RPC request to agent
+2. Agent receives cancel and stops current operation
+3. Agent returns prompt result with `stopReason: "cancelled"`
+4. Queue owner processes cancellation and is ready for next prompt
+5. Session remains active and can accept new prompts immediately
+
+## Exit Codes
+
+| Code | Meaning |
+|------|-------|
+| `0` | Success (cancel sent or nothing to cancel) |
+| `1` | Error (IPC failure, session not found) |
+
+<Note>
+Cancel always exits with code `0` when there's nothing to cancel. This is intentional to allow cancel to be used idempotently in scripts.
+</Note>
+
+## Use Cases
+
+### Stop Runaway Prompt
+
+```bash
+# Prompt is taking too long or doing the wrong thing
+acpx codex cancel
+
+# Send corrected prompt
+acpx codex "let's try a different approach"
+```
+
+### CI/CD Timeout
+
+```bash
+#!/bin/bash
+# Run agent with timeout
+
+acpx codex "run analysis" &
+PID=$!
+
+sleep 300
+
+if kill -0 $PID 2>/dev/null; then
+  echo "Timeout reached, cancelling..."
+  acpx codex cancel
+  wait $PID
+fi
+```
+
+### Parallel Session Control
+
+```bash
+# Cancel all named sessions
+for SESSION in backend frontend docs; do
+  acpx codex cancel -s $SESSION
+done
+```
+
+### Automated Cleanup
+
+```bash
+# Cancel any running prompts before cleanup
+acpx codex cancel
+acpx codex sessions close
+```
+
+## Agent Support
+
+Not all agents support `session/cancel` equally:
+
+- **Pi**: Cancels current operation immediately
+- **OpenClaw**: Respects cancel for most operations
+- **Codex**: Supports cancel with graceful cleanup
+- **Claude**: May complete current tool call before stopping
+
+Check agent-specific documentation for cancel behavior details.
+
+## Cancel and Queue Behavior
+
+If multiple prompts are queued:
+
+- Cancel affects only the currently running prompt
+- Queued prompts remain in the queue
+- After cancellation, the queue owner drains the next queued prompt
+
+To cancel all queued work, use `sessions close` instead.
+
+## Troubleshooting
+
+### Cancel Not Working
+
+```bash
+# Check if session is running
+acpx codex status
+
+# If dead, cancel won't work
+# Output: status: dead
+
+# No prompt to cancel
+acpx codex cancel
+# Output: nothing to cancel
+```
+
+### Cancel Timing
+
+Cancel is not instant. The agent may:
+
+- Complete the current tool call
+- Save partial state
+- Clean up resources
+- Return `stopReason: "cancelled"`
+
+This can take a few seconds. If the agent is completely unresponsive, use `Ctrl+C` with force-kill fallback instead.
+
+## See Also
+
+- [prompt](/cli/prompt) - Send prompts to sessions
+- [status](/cli/status) - Check session status
+- [sessions](/cli/sessions) - Manage sessions (close to terminate completely)

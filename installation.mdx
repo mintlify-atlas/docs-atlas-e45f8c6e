@@ -1,0 +1,224 @@
+---
+title: "Installation"
+description: "How to install and set up acpx"
+icon: "download"
+---
+
+## Install acpx
+
+You can install `acpx` globally or use it with `npx` without installing.
+
+<Tabs>
+  <Tab title="Global Install (Recommended)">
+    Install acpx globally for faster execution:
+
+    <CodeGroup>
+    ```bash npm
+    npm install -g acpx@latest
+    ```
+
+    ```bash pnpm
+    pnpm add -g acpx@latest
+    ```
+
+    ```bash yarn
+    yarn global add acpx@latest
+    ```
+    </CodeGroup>
+
+    After global installation, you can run `acpx` from anywhere:
+
+    ```bash
+    acpx codex "fix the tests"
+    ```
+  </Tab>
+
+  <Tab title="Use with npx">
+    Run acpx without installing:
+
+    ```bash
+    npx acpx@latest codex "fix the tests"
+    ```
+
+    <Note>
+      Session state lives in `~/.acpx/` either way. Global install is a little faster, but `npx acpx@latest` works fine.
+    </Note>
+  </Tab>
+</Tabs>
+
+## Requirements
+
+- **Node.js**: Version 22.12.0 or higher
+- **npm**: Comes with Node.js
+
+Check your Node.js version:
+
+```bash
+node --version
+```
+
+If you need to upgrade, visit [nodejs.org](https://nodejs.org) to download the latest version.
+
+## Agent Prerequisites
+
+`acpx` auto-downloads ACP adapters with `npx` on first use. **You do not need to install adapter packages manually.**
+
+The only prerequisite is the underlying coding agent you want to use:
+
+<CardGroup cols={2}>
+  <Card title="Pi Coding Agent" icon="pi" href="https://github.com/mariozechner/pi">
+    Install Pi to use `acpx pi`
+  </Card>
+  <Card title="OpenClaw ACP" icon="claw-marks" href="https://github.com/openclaw/openclaw">
+    Install OpenClaw to use `acpx openclaw`
+  </Card>
+  <Card title="Codex CLI" icon="code" href="https://codex.openai.com">
+    Install Codex to use `acpx codex` (default)
+  </Card>
+  <Card title="Claude Code" icon="robot" href="https://claude.ai/code">
+    Install Claude Code to use `acpx claude`
+  </Card>
+</CardGroup>
+
+Additional built-in agents (Gemini, Cursor, Copilot, Droid, iFlow, Kilocode, Kimi, Kiro, OpenCode, Qwen) are documented in the [Built-in Agents](/agents/overview) section.
+
+## Verify Installation
+
+After installation, verify that `acpx` is working:
+
+```bash
+acpx --help
+```
+
+You should see the help output showing available commands.
+
+## Session Storage
+
+Session state is stored in `~/.acpx/` by default:
+
+```
+~/.acpx/
+├── config.json          # Global configuration (optional)
+└── sessions/            # Session records and metadata
+    ├── <session-id-1>/
+    ├── <session-id-2>/
+    └── ...
+```
+
+This directory is created automatically on first use.
+
+## Initialize Configuration (Optional)
+
+Create a global configuration file with default values:
+
+```bash
+acpx config init
+```
+
+This creates `~/.acpx/cli/config.json` with a template you can customize:
+
+```json
+{
+  "defaultAgent": "codex",
+  "defaultPermissions": "approve-reads",
+  "nonInteractivePermissions": "deny",
+  "authPolicy": "skip",
+  "ttl": 300,
+  "timeout": null,
+  "format": "text"
+}
+```
+
+See the [Configuration Guide](/guides/configuration) for details on all config options.
+
+## Quick Setup for Agents
+
+If you want another agent harness (like Pi, OpenClaw, or Claude Code) to use `acpx`, copy this block and paste it into your agent:
+
+```text
+I want you to use acpx to run coding agents over the Agent Client Protocol
+(ACP) instead of scraping PTY sessions. Please do the following:
+
+1. Install acpx globally (recommended) or use npx:
+   npm install -g acpx@latest
+
+   Or without installing:
+   npx acpx@latest
+
+2. Install the acpx skill so you have the full reference available:
+   npx acpx@latest --skill install acpx
+
+3. Read the acpx skill reference so you know every command, flag, and
+   workflow pattern:
+   https://raw.githubusercontent.com/openclaw/acpx/main/skills/acpx/SKILL.md
+
+4. If you need the full CLI reference with all options and examples:
+   https://raw.githubusercontent.com/openclaw/acpx/main/docs/CLI.md
+
+From now on, when you need to delegate work to a coding agent, use acpx
+instead of spawning raw terminal sessions. For example:
+  npx acpx@latest codex "fix the failing tests"
+  npx acpx@latest claude "refactor the auth module"
+  npx acpx@latest codex exec "one-shot: summarize this repo"
+```
+
+## Troubleshooting
+
+### Command not found
+
+If you get "command not found" after global installation:
+
+1. Verify npm global bin directory is in your PATH:
+   ```bash
+   npm config get prefix
+   ```
+
+2. Add the bin directory to your PATH:
+   ```bash
+   export PATH="$(npm config get prefix)/bin:$PATH"
+   ```
+
+3. Add the export to your shell profile (`~/.bashrc`, `~/.zshrc`, etc.)
+
+### Permission errors
+
+If you get EACCES errors during global installation:
+
+<Tabs>
+  <Tab title="Use npx (Recommended)">
+    Use `npx acpx@latest` instead of global installation to avoid permission issues.
+  </Tab>
+
+  <Tab title="Fix npm Permissions">
+    Follow the [npm documentation](https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally) to resolve global install permissions.
+  </Tab>
+</Tabs>
+
+### Node version too old
+
+If you get errors about Node version:
+
+```bash
+# Check your Node version
+node --version
+
+# Upgrade to Node 22.12.0 or higher
+# Visit https://nodejs.org or use a version manager like nvm
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get up and running in 5 minutes
+  </Card>
+  <Card title="Basic Usage" icon="play" href="/guides/basic-usage">
+    Learn the fundamental commands
+  </Card>
+  <Card title="Configuration" icon="gear" href="/guides/configuration">
+    Customize acpx for your workflow
+  </Card>
+  <Card title="Built-in Agents" icon="robot" href="/agents/overview">
+    Explore available ACP agents
+  </Card>
+</CardGroup>

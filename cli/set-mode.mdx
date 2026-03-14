@@ -1,0 +1,271 @@
+---
+title: "set-mode"
+description: "Change agent session mode"
+---
+
+## Overview
+
+The `set-mode` command calls the ACP `session/set_mode` method to change the agent's operating mode. Mode values are adapter-defined and vary by agent.
+
+## Syntax
+
+```bash
+acpx [global_options] <agent> set-mode <mode> [-s <name>]
+acpx [global_options] set-mode <mode> [-s <name>]  # defaults to codex
+```
+
+## Behavior
+
+1. **Finds Session**: Looks up session matching `(agentCommand, cwd, name?)`
+2. **Routes via IPC**: If queue owner is active, sends `session/set_mode` via IPC
+3. **Direct Reconnect**: If no queue owner, reconnects directly to agent and calls `session/set_mode`
+4. **Validates Mode**: Agent validates the mode id and rejects unsupported values (often as `Invalid params`)
+
+<Note>
+Mode values are adapter-defined. Each agent has its own set of supported modes. Unsupported modes are rejected by the adapter.
+</Note>
+
+## Options
+
+<ParamField path="-s, --session" type="string">
+  Use named session instead of cwd default.
+</ParamField>
+
+## Mode Values by Agent
+
+Mode support varies by agent. Common modes include:
+
+### Codex
+
+- `auto` - Automatic mode selection
+- `plan` - Planning mode (think before acting)
+- `direct` - Direct execution mode
+
+### OpenClaw
+
+- `standard` - Standard operating mode
+- `focused` - Focused mode with reduced tool usage
+
+### Pi
+
+- `default` - Default mode
+- `careful` - Careful mode with more validation
+
+Refer to agent-specific documentation for complete mode lists.
+
+<Warning>
+Mode ids are not standardized across ACP. A mode that works for one agent may not be valid for another.
+</Warning>
+
+## Output
+
+### Text Format (Default)
+
+```
+mode set: plan
+```
+
+### JSON Format
+
+```json
+{
+  "action": "mode_set",
+  "modeId": "plan",
+  "resumed": true,
+  "acpxRecordId": "abc123",
+  "acpxSessionId": "session-xyz",
+  "agentSessionId": "agent-abc"
+}
+```
+
+### Quiet Format
+
+```
+plan
+```
+
+## Examples
+
+### Basic Usage
+
+```bash
+# Set mode for default session
+acpx codex set-mode plan
+
+# Set mode for named session
+acpx codex set-mode auto -s backend
+
+# Different agent
+acpx pi set-mode careful
+```
+
+### Mode Switching Workflow
+
+```bash
+# Start in planning mode
+acpx codex sessions new
+acpx codex set-mode plan
+
+# Get a plan
+acpx codex "plan how to refactor the auth module"
+
+# Switch to direct mode
+acpx codex set-mode direct
+
+# Execute the plan
+acpx codex "implement the refactoring plan"
+```
+
+### Named Sessions
+
+```bash
+# Different modes for different workflows
+acpx codex sessions new --name review
+acpx codex set-mode careful -s review
+
+acpx codex sessions new --name hotfix
+acpx codex set-mode direct -s hotfix
+```
+
+### JSON Automation
+
+```bash
+# Set mode and capture result
+RESULT=$(acpx --format json codex set-mode plan | jq -r '.modeId')
+echo "Mode set to: $RESULT"
+```
+
+### Error Handling
+
+```bash
+# Invalid mode
+acpx codex set-mode invalid-mode
+# Error: Invalid params (adapter rejects unknown mode)
+
+# Exit code 1
+echo $?
+# Output: 1
+```
+
+## Session Routing
+
+set-mode uses the same session routing as `prompt`:
+
+- Searches for session matching `(agentCommand, cwd, name?)`
+- Uses directory-walk routing up to git root
+- Only operates on active (non-closed) sessions
+- Exits with code `4` if no session found
+
+## IPC vs Direct Connection
+
+**Queue owner active** (prompt running or idle within TTL):
+- Sends `session/set_mode` via IPC
+- No agent restart
+- Instant mode change
+
+**Queue owner inactive**:
+- Spawns agent
+- Attempts `session/load`
+- Calls `session/set_mode` directly
+- Agent shuts down after mode change
+
+Next prompt will start queue owner with the new mode setting.
+
+## Mode Persistence
+
+Mode changes are sent to the agent but may not persist across session loads, depending on the adapter:
+
+- **Some agents** persist mode in their session state (survives restarts)
+- **Other agents** reset to default mode on `session/load`
+
+Check agent-specific documentation for mode persistence behavior.
+
+## Common Patterns
+
+### Planning Workflow
+
+```bash
+# Plan before execution
+acpx codex set-mode plan
+acpx codex "analyze the codebase and propose refactoring"
+
+# Review the plan, then execute
+acpx codex set-mode direct
+acpx codex "implement the refactoring"
+```
+
+### Careful Review
+
+```bash
+# Switch to careful mode for code review
+acpx pi set-mode careful
+acpx pi "review this PR for security issues"
+
+# Back to default
+acpx pi set-mode default
+```
+
+### Session-Specific Modes
+
+```bash
+# Backend: direct mode
+acpx codex sessions new --name backend
+acpx codex set-mode direct -s backend
+
+# Docs: plan mode
+acpx codex sessions new --name docs
+acpx codex set-mode plan -s docs
+```
+
+## Exit Codes
+
+| Code | Meaning |
+|------|-------|
+| `0` | Success |
+| `1` | Error (invalid mode, agent error) |
+| `4` | No session found |
+
+## Troubleshooting
+
+### Mode Not Supported
+
+```bash
+# Agent rejects mode
+acpx codex set-mode invalid-mode
+# Error: Invalid params
+```
+
+Check agent documentation for supported modes.
+
+### Session Not Found
+
+```bash
+# No session exists
+acpx codex set-mode plan
+# Error: No acpx session found
+# Create one: acpx codex sessions new
+
+# Create session first
+acpx codex sessions new
+acpx codex set-mode plan
+```
+
+### Mode Reset After Restart
+
+Some agents reset mode on session load. Set mode again after session recovery:
+
+```bash
+# Session crashed
+acpx codex set-mode plan
+acpx codex "continue work"
+# Session auto-recovers, mode might reset
+
+# Set mode again if needed
+acpx codex set-mode plan
+```
+
+## See Also
+
+- [set](/cli/set) - Set config options
+- [prompt](/cli/prompt) - Send prompts to sessions
+- [sessions](/cli/sessions) - Manage sessions

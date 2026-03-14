@@ -1,0 +1,258 @@
+---
+title: "Agent Client Protocol"
+description: "Understanding ACP and how acpx provides a headless client for structured agent communication"
+---
+
+## What is ACP?
+
+The **Agent Client Protocol (ACP)** is a structured protocol for AI agents and orchestrators to communicate with coding agents over JSON-RPC, eliminating the need for PTY scraping and terminal output parsing.
+
+ACP provides:
+
+- **Structured messaging** - JSON-RPC 2.0 messages instead of ANSI escape sequences
+- **Typed events** - Session updates, tool calls, thinking blocks, and client operations with stable schemas
+- **Bidirectional control** - Client can request permissions, cancel operations, and configure sessions
+- **Session lifecycle** - Create, load, resume, and persist conversation state
+- **Tool orchestration** - Structured tool calls with typed parameters and results
+
+## Why ACP matters
+
+Traditional agent orchestration requires parsing terminal output:
+
+```bash
+# PTY scraping approach (fragile)
+spawn("some-agent", ["--prompt", "fix tests"])
+# → Parse ANSI codes, detect done state, extract structured data from text
+```
+
+With ACP, you get structured protocol messages:
+
+```json
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Hello"}}}
+{"jsonrpc":"2.0","id":"req-1","result":{"stopReason":"end_turn"}}
+```
+
+<Note>
+ACP is designed for **agent-to-agent** communication, not human-to-agent. The primary consumer of acpx is another AI agent, orchestrator, or automation harness.
+</Note>
+
+## How acpx implements ACP
+
+`acpx` is a headless CLI client that speaks ACP to coding agents. It acts as the **client** side of the protocol, delegating work to **agent servers** that implement ACP.
+
+### Architecture
+
+```
+┌─────────────────┐         ACP (JSON-RPC)        ┌──────────────────┐
+│  Orchestrator   │ ───────────────────────────▶  │      acpx        │
+│  (Pi, Claude,   │                                │   (ACP Client)   │
+│   your script)  │ ◀─────────────────────────────│                  │
+└─────────────────┘    structured events          └──────────────────┘
+                                                           │
+                                                           │ JSON-RPC
+                                                           ▼
+                                              ┌─────────────────────────┐
+                                              │   Coding Agent Server   │
+                                              │  (Codex, Claude Code,   │
+                                              │   Pi, OpenClaw, etc.)   │
+                                              └─────────────────────────┘
+```
+
+### Protocol flow example
+
+Typical ACP conversation:
+
+1. **Initialize** - Client starts agent process and exchanges capabilities
+2. **Create/Load Session** - Establish or resume conversation context
+3. **Prompt** - Send user message and receive structured updates
+4. **Session Updates** - Agent emits thinking blocks, tool calls, text chunks
+5. **Client Operations** - Agent requests file reads, writes, terminal commands
+6. **Completion** - Agent signals end of turn with stop reason
+
+```typescript
+// Conceptual flow (acpx handles this internally)
+await client.initialize()
+const { sessionId } = await client.createSession(cwd)
+const response = await client.prompt(sessionId, "fix the tests")
+// → Stream of session/update notifications
+// → Tool calls, thinking blocks, text chunks
+// → Final response with stopReason: "end_turn"
+```
+
+## ACP message types
+
+ACP uses JSON-RPC 2.0 for all communication. Common message patterns:
+
+### Requests
+
+```json
+{"jsonrpc":"2.0","id":"req-1","method":"session/prompt","params":{"sessionId":"019c...","prompt":"hi"}}
+```
+
+### Responses
+
+```json
+{"jsonrpc":"2.0","id":"req-1","result":{"stopReason":"end_turn"}}
+```
+
+### Notifications
+
+```json
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Analyzing..."}}}
+```
+
+### Errors
+
+```json
+{"jsonrpc":"2.0","id":"req-1","error":{"code":-32603,"message":"Session not found"}}
+```
+
+## Session lifecycle
+
+ACP sessions are persistent conversation contexts:
+
+```typescript
+// Create new session
+session/new → { sessionId, agentSessionId }
+
+// Resume existing session  
+session/load → { sessionId, agentSessionId }
+
+// Send prompt
+session/prompt → { stopReason }
+
+// Cancel running prompt
+session/cancel → success
+
+// Configure session
+session/set_mode → success
+session/set_config_option → { response }
+```
+
+See [Sessions](/cli/sessions) for how acpx manages session persistence and routing.
+
+## Client operations
+
+Agents can request client-side operations during execution:
+
+```json
+{"method":"client/request_operation","params":{
+  "operation":"fs/read_file",
+  "params":{"path":"src/test.ts"}
+}}
+```
+
+Common operations:
+
+- **`fs/read_file`** - Read file contents
+- **`fs/write_file`** - Write file contents  
+- **`fs/edit_file`** - Apply edits to existing file
+- **`fs/search_files`** - Search file contents with regex
+- **`terminal/run_command`** - Execute shell command
+
+<Warning>
+Client operations are subject to **permission modes**. See [Permissions](/concepts/permissions) for approval policies.
+</Warning>
+
+## Permission requests
+
+Agents must request permission for sensitive operations:
+
+```json
+{"method":"client/request_permission","params":{
+  "toolCall":{"title":"Write src/auth.ts","kind":"edit"},
+  "options":[
+    {"optionId":"allow","kind":"allow_once"},
+    {"optionId":"deny","kind":"reject_once"}
+  ]
+}}
+```
+
+Client responds with selected option:
+
+```json
+{"result":{"outcome":{"outcome":"selected","optionId":"allow"}}}
+```
+
+## Supported agents
+
+acpx includes built-in adapters for popular ACP-compatible agents:
+
+| Agent | Adapter | Documentation |
+|-------|---------|---------------|
+| Pi | `pi-acp` | [Pi Agent](/agents/pi) |
+| OpenClaw | `openclaw acp` | [OpenClaw](/agents/openclaw) |
+| Codex | `codex-acp` | [Codex](/agents/codex) |
+| Claude Code | `claude-agent-acp` | [Claude](/agents/claude) |
+
+All agents use the same ACP protocol surface, so switching between agents requires only changing the agent command.
+
+## Output formats
+
+acpx can emit ACP messages in multiple formats:
+
+### Raw JSON-RPC (`--format json`)
+
+One ACP message per line (NDJSON):
+
+```bash
+acpx --format json codex exec "review code"
+```
+
+```json
+{"jsonrpc":"2.0","id":"req-1","method":"session/prompt",...}
+{"jsonrpc":"2.0","method":"session/update",...}
+{"jsonrpc":"2.0","id":"req-1","result":{"stopReason":"end_turn"}}
+```
+
+### Human-readable text (`--format text`)
+
+Formatted output for terminal display:
+
+```bash
+acpx codex "fix tests"
+```
+
+```
+[thinking] Investigating test failures
+
+[tool] Run npm test (running)
+[tool] Run npm test (completed)
+  output: ✓ auth.test.ts
+  
+Fixed the async timeout in checkout.test.ts
+
+[done] end_turn  
+```
+
+### Quiet mode (`--format quiet`)
+
+Final assistant text only:
+
+```bash
+acpx --format quiet codex "summarize changes"
+```
+
+```
+Added authentication middleware and updated 3 test files.
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Sessions" icon="arrows-rotate" href="/cli/sessions">
+    Learn how acpx manages persistent, named, and scoped sessions
+  </Card>
+  
+  <Card title="Queue Management" icon="list" href="/concepts/queue-management">
+    Understand prompt queuing and queue owner lifecycle
+  </Card>
+  
+  <Card title="Permissions" icon="shield-check" href="/concepts/permissions">
+    Configure permission modes for client operations
+  </Card>
+  
+  <Card title="CLI Reference" icon="terminal" href="/cli/overview">
+    Full command and option reference
+  </Card>
+</CardGroup>

@@ -1,0 +1,572 @@
+---
+title: "Queue Management"
+description: "Understanding prompt queuing, queue owner lifecycle, and concurrent session handling in acpx"
+---
+
+## Why queuing?
+
+ACP agents process prompts sequentially within a session. If you submit a new prompt while one is already running, acpx queues the request instead of rejecting it.
+
+Queuing enables:
+
+- **No busy/retry loops** - Submit and forget, acpx handles serialization
+- **Concurrent submissions** - Multiple terminal windows can submit to the same session
+- **Warm sessions** - Keep ACP connection alive for fast follow-ups
+- **Graceful shutdown** - Queue owners idle out after TTL, not between prompts
+
+## Queue owner architecture
+
+Each active session has at most **one queue owner process**:
+
+```
+┌───────────────────┐
+│   Terminal 1      │───┐
+│   acpx prompt     │   │
+└───────────────────┘   │
+                        ▼
+┌───────────────────┐  ┌─────────────────────────┐
+│   Terminal 2      │─▶│   Queue Owner Process   │
+│   acpx prompt     │  │   (session XYZ)         │
+└───────────────────┘  │                         │
+                       │  • Holds ACP connection │
+┌───────────────────┐  │  • Drains queued tasks  │
+│   Terminal 3      │─▶│  • Sequential execution │
+│   acpx cancel     │  │  • Idle TTL lifecycle   │
+└───────────────────┘  └─────────────────────────┘
+                                   │
+                                   ▼
+                        ┌────────────────────────┐
+                        │   ACP Agent Server     │
+                        │   (Codex, Claude, Pi)  │
+                        └────────────────────────┘
+```
+
+### Queue owner responsibilities
+
+1. **Acquire lease** - Atomic ownership using lockfile + socket
+2. **Bind IPC endpoint** - Unix domain socket for queue submissions
+3. **Accept requests** - Other acpx processes submit prompts via IPC
+4. **Execute sequentially** - Drain queue one task at a time
+5. **Keep session warm** - Reuse ACP client across prompts
+6. **Idle TTL shutdown** - Exit after inactivity period (default 300s)
+
+## Prompt submission flow
+
+When you run `acpx codex "fix tests"`:
+
+### Fast path (queue owner exists)
+
+1. **Resolve session** - Find session record via directory walk
+2. **Check for owner** - Read lease from `~/.acpx/queues/{sessionId}.lock`  
+3. **Connect to socket** - IPC connection to queue owner's Unix socket
+4. **Submit task** - Send prompt with unique `requestId`
+5. **Stream results** - Receive ACP messages for this request only
+6. **Exit on completion** - Caller exits, owner stays alive
+
+### Slow path (no queue owner)
+
+1. **Spawn queue owner** - Fork detached process with session parameters
+2. **Wait for readiness** - Poll for lease file and socket availability
+3. **Submit task** - Connect and send prompt like fast path
+4. **Stream results** - Same as fast path
+
+<Note>
+Spawning a queue owner adds ~50-200ms latency. Warm sessions (owner already running) have near-zero submission overhead.
+</Note>
+
+## Queue IPC protocol
+
+Queue owner communication uses JSON-RPC over Unix domain socket:
+
+### Submit request
+
+```json
+{
+  "type": "submit",
+  "requestId": "req-abc123",
+  "sessionId": "019c1234...",
+  "message": "fix the tests",
+  "prompt": {"text": "fix the tests"},
+  "permissionMode": "approve-reads",
+  "waitForCompletion": true
+}
+```
+
+### Event stream (owner → caller)
+
+```json
+{"type":"ack","requestId":"req-abc123"}
+{"type":"event","requestId":"req-abc123","message":{...ACP message...}}
+{"type":"result","requestId":"req-abc123","result":{"stopReason":"end_turn"}}
+```
+
+### Cancel request
+
+```json
+{
+  "type": "cancel",
+  "requestId": "cancel-xyz789"
+}
+```
+
+### Control requests (set-mode, set-config)
+
+```json
+{
+  "type": "set_mode",
+  "requestId": "mode-456",
+  "modeId": "auto"
+}
+```
+
+## Queue owner lifecycle
+
+### Startup
+
+```bash
+# Internally spawned by acpx (not called directly)
+node dist/cli.js codex __queue_owner__ \
+  --session-id 019c1234... \
+  --ttl 300 \
+  --max-queue-depth 16
+```
+
+Startup sequence:
+
+1. **Acquire lease** - Write `~/.acpx/queues/{sessionId}.lock` atomically
+2. **Bind socket** - Create Unix socket at path from lease
+3. **Start listening** - Accept IPC connections
+4. **Initialize ACP** - Lazily connect on first task (or eagerly if configured)
+5. **Signal ready** - Lease file contains socket path and PID
+
+### Active phase
+
+While processing tasks:
+
+```typescript
+while (true) {
+  const task = await owner.nextTask(ttlMs)
+  if (!task) break  // Idle TTL expired
+  
+  await runTask(task)  // Execute prompt, stream results
+  // Loop back and wait for next task
+}
+```
+
+During execution:
+
+- **Heartbeat updates** - Refresh lease with queue depth every 5s
+- **Cancel requests** - Handled via `session/cancel` to active client
+- **Mode/cli/config changes** - Applied to active ACP session
+
+### Shutdown
+
+Queue owner exits when:
+
+- **Idle TTL expires** (default 300s with no tasks)
+- **Session closed** (`sessions close` command)
+- **Process terminated** (SIGTERM, SIGINT, crash)
+
+Shutdown sequence:
+
+1. Close IPC socket (reject new submissions)
+2. Close ACP client connection
+3. Release lease (delete lock file)
+4. Persist final session state
+5. Exit process
+
+## Idle TTL behavior
+
+The **idle TTL** controls how long queue owners stay alive after the last task completes.
+
+### Default TTL
+
+```bash
+# Default: 300 seconds (5 minutes)
+acpx codex "first prompt"
+# → Owner starts, processes prompt, waits 5 minutes
+
+# Within 5 minutes:
+acpx codex "second prompt"  # Fast: reuses warm owner
+
+# After 5 minutes:
+acpx codex "third prompt"   # Slow: spawns new owner
+```
+
+### Custom TTL
+
+```bash
+# Keep alive for 30 seconds only
+acpx --ttl 30 codex "quick task"
+
+# Keep alive indefinitely (TTL = 0)
+acpx --ttl 0 codex "long-running workflow"
+# Manual cleanup required: acpx codex sessions close
+```
+
+<Warning>
+`--ttl 0` disables idle shutdown. Queue owners will stay alive until explicitly closed or terminated.
+</Warning>
+
+### TTL edge cases
+
+```bash
+# Caller exits immediately, owner stays alive
+acpx --ttl 300 codex "background task"
+# Caller process exits after prompt completes
+# Queue owner continues running for 5 more minutes
+
+# Multiple submissions reset idle timer
+acpx codex "task 1"  # Owner starts, TTL = 300s
+sleep 200
+acpx codex "task 2"  # TTL resets to 300s from now
+```
+
+## Wait vs no-wait submission
+
+### Wait for completion (default)
+
+```bash
+acpx codex "fix the tests"
+```
+
+Behavior:
+
+- Submit task to queue owner
+- Stream ACP events for this request
+- Block until `stopReason` received
+- Exit when task completes
+
+### Fire-and-forget (`--no-wait`)
+
+```bash
+acpx codex --no-wait "run long analysis"
+```
+
+Behavior:
+
+- Submit task to queue owner  
+- Wait for acknowledgement (`{"type":"ack"}`)
+- **Exit immediately** without streaming results
+- Task continues running in background
+
+<Info>
+`--no-wait` is useful for CI/automation where you want to enqueue work and check results later, or for long-running background tasks.
+</Info>
+
+## Queue depth limits
+
+Queue owners enforce a maximum queue depth (default: 16 tasks):
+
+```bash
+# Override queue depth
+# (Currently internal, exposed via QueueOwnerRuntimeOptions)
+```
+
+When queue is full:
+
+- New submissions are rejected
+- Caller receives error: `Queue full (depth=16)`
+- Wait and retry, or cancel existing tasks
+
+Queue depth is included in:
+
+- Lease heartbeat updates
+- `acpx codex status` output
+- Performance metrics
+
+## Cancel behavior
+
+Cancel a running prompt:
+
+```bash
+acpx codex cancel
+```
+
+Cancel flow:
+
+1. **Check for owner** - Find queue owner via lease
+2. **Submit cancel request** - Send IPC message to owner
+3. **Owner calls `session/cancel`** - ACP cancel protocol to agent
+4. **Wait for cancellation** - Agent returns `stopReason=cancelled`
+5. **Return success** - Caller exits
+
+If no prompt is running:
+
+```bash
+acpx codex cancel
+# Output: nothing to cancel
+# Exit code: 0 (success)
+```
+
+### Interrupt handling
+
+When you press `Ctrl+C` during a prompt:
+
+1. **Intercept signal** - acpx handles SIGINT gracefully
+2. **Send cancel** - Call `session/cancel` via ACP
+3. **Wait briefly** - 2.5s timeout for graceful cancellation
+4. **Force kill** - SIGKILL agent if cancellation times out
+
+```bash
+acpx codex "long running task"
+# Press Ctrl+C
+# → Sends session/cancel
+# → Waits for stopReason=cancelled
+# → Falls back to SIGKILL if needed
+```
+
+## Concurrent session handling
+
+Multiple sessions can run in parallel:
+
+```bash
+# Terminal 1: default session
+acpx codex "optimize queries"
+
+# Terminal 2: named session (parallel)
+acpx codex -s docs "update README"
+
+# Terminal 3: different agent (parallel)
+acpx claude "review architecture"
+```
+
+Isolation guarantees:
+
+- **Separate queue owners** - One per `(agent, cwd, name)` scope
+- **Separate locks** - Independent lease files per session
+- **Separate ACP connections** - No cross-session interference
+
+## Queue lease structure
+
+Lease files live at:
+
+```
+~/.acpx/queues/{sessionId}.lock
+```
+
+Lease contents:
+
+```json
+{
+  "sessionId": "019c1234-abcd-7890-efgh-012345678901",
+  "pid": 12345,
+  "socketPath": "/tmp/acpx-queue-019c1234.sock",
+  "createdAt": "2026-03-14T10:00:00Z",
+  "lastHeartbeatAt": "2026-03-14T10:05:32Z",
+  "protocolVersion": 1,
+  "ownerGeneration": 3,
+  "queueDepth": 2
+}
+```
+
+### Lease acquisition
+
+Atomic ownership using file system:
+
+```typescript
+// Pseudo-code
+if (leaseFileExists && pidIsAlive && socketReachable) {
+  // Another owner is active
+  return null
+}
+
+// Claim ownership
+writeLease({
+  sessionId,
+  pid: process.pid,
+  socketPath: generateSocketPath(),
+  ownerGeneration: previousGeneration + 1
+})
+```
+
+### Stale lease recovery
+
+If queue owner crashes:
+
+1. **Next caller** checks lease PID
+2. **PID dead** or **socket unreachable** → stale lease
+3. **Terminate stale owner** - SIGKILL if PID still exists
+4. **Remove lease** - Delete lock file
+5. **Spawn new owner** - Fresh owner with incremented generation
+
+<Note>
+Generation numbers prevent stale owner takeover races. Messages from old generations are rejected.
+</Note>
+
+## Status inspection
+
+Check queue owner health:
+
+```bash
+acpx codex status
+```
+
+Example output (text):
+
+```
+Session ID: 019c1234-abcd-7890-efgh-012345678901
+Agent Command: npx @zed-industries/codex-acp
+Cwd: /home/user/repos/shop
+PID: 12345
+Status: running
+Uptime: 8m 42s
+Queue Depth: 2
+Last Prompt: 1m 23s ago
+```
+
+Example output (JSON):
+
+```json
+{
+  "sessionId": "019c1234-abcd-7890-efgh-012345678901",
+  "agentCommand": "npx @zed-industries/codex-acp",
+  "cwd": "/home/user/repos/shop",
+  "pid": 12345,
+  "status": "running",
+  "uptimeMs": 522000,
+  "queueDepth": 2,
+  "lastPromptAt": "2026-03-14T10:04:00Z",
+  "ownerPid": 12346,
+  "ownerGeneration": 3
+}
+```
+
+## Performance characteristics
+
+### Cold start (no owner)
+
+```
+Prompt submission: ~50-200ms
+  ├─ Spawn queue owner: ~30-100ms
+  ├─ Owner startup: ~20-50ms
+  └─ IPC connect: ~5-20ms
+  
+ACP connection: ~500-2000ms
+  ├─ Adapter spawn: ~200-1000ms
+  ├─ Initialize: ~100-500ms  
+  └─ Create/load session: ~200-500ms
+```
+
+### Warm path (owner running)
+
+```
+Prompt submission: ~5-20ms
+  ├─ Resolve session: ~1-5ms
+  ├─ IPC connect: ~2-10ms
+  └─ Submit task: ~2-5ms
+  
+ACP prompt: ~0-50ms
+  ├─ Already connected: 0ms
+  └─ session/prompt call: ~10-50ms
+```
+
+### Metrics
+
+acpx tracks queue metrics:
+
+- `queue.connect` - IPC connection time
+- `queue.owner.depth` - Current queue depth (gauge)
+- `queue.owner.stale_recovered` - Stale lease recoveries (counter)
+
+Enable verbose logging to see perf metrics:
+
+```bash
+acpx --verbose codex "test prompt"
+```
+
+```
+[acpx] queue.connect: 8ms
+[acpx] prompt.connect_and_load: 1245ms
+[acpx] prompt.agent_turn: 3821ms
+[acpx] prompt.total: 5089ms
+```
+
+## Best practices
+
+### Choose appropriate TTL
+
+```bash
+# Short-lived scripts: use short TTL
+acpx --ttl 30 codex "quick check"
+
+# Interactive sessions: use default (300s)
+acpx codex "iterative development"
+
+# Long workflows: disable TTL
+acpx --ttl 0 codex "multi-hour analysis"
+acpx codex sessions close  # Manual cleanup when done
+```
+
+### Use --no-wait for background tasks
+
+```bash
+# CI pipeline: enqueue and continue
+acpx codex --no-wait "run full test suite"
+# Check results later or tail event log
+```
+
+### Monitor queue depth
+
+```bash
+# Check if queue is backing up
+acpx codex status | grep "Queue Depth"
+
+# If depth is high, cancel or wait
+acpx codex cancel
+```
+
+### Clean up stale owners
+
+If queue owners aren't shutting down:
+
+```bash
+# Close session explicitly
+acpx codex sessions close
+
+# Check for orphaned locks
+ls ~/.acpx/queues/
+
+# Manual cleanup (if needed)
+rm ~/.acpx/queues/*.lock
+```
+
+## Future: Detached mode
+
+The current queue owner runs as a **foreground-attached** process. A future update will move to **detached daemon mode**:
+
+### Current behavior
+
+- Queue owner runs in submitter process
+- Caller blocks until TTL expires
+- Shell sees "hung" process after prompt completes
+
+### Future behavior (detached)
+
+- Queue owner spawns as daemon
+- Caller exits immediately after task completion
+- Owner continues in background until TTL
+
+<Info>
+See `docs/2026-02-25-warm-session-owner-architecture.md` in the source repo for the full detached mode design.
+</Info>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Sessions" icon="arrows-rotate" href="/cli/sessions">
+    Understand session lifecycle and scoping
+  </Card>
+  
+  <Card title="Permissions" icon="shield-check" href="/concepts/permissions">
+    Configure permission modes for operations
+  </Card>
+  
+  <Card title="CLI Reference" icon="terminal" href="/cli/overview">
+    Full command and option reference
+  </Card>
+  
+  <Card title="Agent Client Protocol" icon="code" href="/concepts/agent-client-protocol">
+    Learn about the underlying ACP protocol
+  </Card>
+</CardGroup>

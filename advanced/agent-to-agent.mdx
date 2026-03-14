@@ -1,0 +1,367 @@
+---
+title: Agent-to-Agent Communication
+description: Use acpx to enable AI agents to delegate work to coding agents over ACP instead of PTY scraping
+---
+
+## Overview
+
+The primary use case for acpx is **agent-to-agent communication**. When an orchestrator AI agent needs to delegate coding tasks, acpx provides a structured protocol interface instead of fragile terminal scraping.
+
+<Note>
+AI agents struggle with PTY sessions because they must parse ANSI escape codes, handle terminal state, and guess when output is complete. acpx replaces this with clean JSON-RPC messages over ACP.
+</Note>
+
+## Why Agents Need acpx
+
+Traditional approach (PTY scraping):
+- Agents spawn `codex`, `claude`, or `pi` in a terminal
+- Parse unstructured ANSI output
+- Guess when the agent is done thinking vs. waiting for input
+- Handle terminal control sequences
+- Risk of hung sessions and parsing errors
+
+With acpx:
+- Structured JSON messages with clear boundaries
+- Typed events: `thinking`, `tool_call`, `agent_message_chunk`
+- Explicit `stopReason` signals (no guessing)
+- Session management with state persistence
+- Cooperative cancellation and control
+
+## Basic Agent Delegation Pattern
+
+### Simple Delegation
+
+An orchestrator agent delegates a coding task:
+
+```bash
+acpx codex sessions ensure
+acpx codex "fix the failing test in checkout.test.ts"
+```
+
+The orchestrator receives:
+- Structured thinking updates
+- Tool execution details (which files, what commands)
+- Final result with clear completion signal
+
+### Using JSON Output for Parsing
+
+For programmatic consumption, use `--format json`:
+
+```bash
+acpx --format json codex "review the auth module for security issues"
+```
+
+Output is NDJSON (one JSON-RPC message per line):
+
+```json
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"Analyzing authentication flow..."}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionUpdate":"tool_call","toolCallId":"tool_1","title":"Read src/auth.ts","status":"running"}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionUpdate":"tool_call_update","toolCallId":"tool_1","status":"completed"}}
+{"jsonrpc":"2.0","id":"req-1","result":{"stopReason":"end_turn"}}
+```
+
+### Parsing JSON Output
+
+Extract specific information from the structured stream:
+
+```bash
+# Get all tool executions
+acpx --format json codex exec "audit the payment flow" \
+  | jq -r 'select(.method=="session/update" and .params.sessionUpdate=="tool_call") | .params.title'
+
+# Extract final assistant message
+acpx --format json codex exec "explain this bug" \
+  | jq -r 'select(.method=="session/update" and .params.sessionUpdate=="agent_message_chunk") | .params.content.text' \
+  | tr -d '\n'
+```
+
+## Multi-Agent Orchestration
+
+### Parallel Agents on Different Tasks
+
+Run multiple coding agents in parallel workstreams:
+
+```bash
+# Terminal 1: Backend work
+acpx codex sessions new --name backend
+acpx codex -s backend "implement token refresh in auth service"
+
+# Terminal 2: Frontend work  
+acpx codex sessions new --name frontend
+acpx codex -s frontend "add loading states to checkout flow"
+
+# Terminal 3: Documentation
+acpx claude sessions new --name docs
+acpx claude -s docs "document the new auth API"
+```
+
+Each session maintains independent context and history.
+
+### Sequential Task Chain
+
+Orchestrator delegates tasks in sequence, using results from each:
+
+```bash
+# Step 1: Analysis
+ACPX_RESULT=$(acpx --format quiet codex exec "identify the root cause of checkout timeout")
+
+# Step 2: Use analysis to guide fix
+acpx codex "Fix the issue: $ACPX_RESULT"
+
+# Step 3: Verify
+acpx codex "run the checkout test suite and confirm the fix"
+```
+
+## Session Management for Agents
+
+### Persistent Sessions
+
+Agents can maintain long-running conversations:
+
+```bash
+# Create session for this workstream
+acpx codex sessions ensure --name pr-review
+
+# Multiple turns in same context
+acpx codex -s pr-review "review PR #842 for security issues"
+acpx codex -s pr-review "now check for performance regressions"
+acpx codex -s pr-review "generate a summary report"
+
+# Close when done
+acpx codex sessions close pr-review
+```
+
+Context persists across invocations - the coding agent remembers previous turns.
+
+### One-Shot vs Persistent
+
+<CodeGroup>
+```bash One-shot (no memory)
+acpx codex exec "what does this repo do?"
+```
+
+```bash Persistent (remembers context)
+acpx codex sessions ensure
+acpx codex "what does this repo do?"
+acpx codex "now explain the auth flow"
+acpx codex "what security risks do you see?"
+```
+</CodeGroup>
+
+Use `exec` for stateless queries. Use persistent sessions for multi-turn collaboration.
+
+## Handling Errors and Timeouts
+
+### Exit Codes
+
+Agents should check exit codes:
+
+| Code | Meaning | Action |
+|------|---------|--------|
+| `0` | Success | Continue |
+| `1` | Runtime error | Retry or escalate |
+| `2` | Usage error | Fix command |
+| `3` | Timeout | Increase `--timeout` |
+| `4` | No session | Run `sessions new` |
+| `5` | Permission denied | Use `--approve-all` |
+| `130` | Interrupted | Handle cancellation |
+
+Example:
+
+```bash
+acpx codex "fix the tests"
+if [ $? -eq 4 ]; then
+  acpx codex sessions ensure
+  acpx codex "fix the tests"
+fi
+```
+
+### Timeout Configuration
+
+For long-running tasks:
+
+```bash
+# Default timeout is adaptive per adapter
+acpx codex "refactor the entire auth system"
+
+# Explicit timeout (seconds)
+acpx --timeout 300 codex "run the full integration test suite"
+```
+
+## Permission Models
+
+### Auto-Approval for Trusted Workloads
+
+```bash
+# Auto-approve all operations
+acpx --approve-all codex "apply the security patch and run tests"
+
+# Auto-approve reads only (default)
+acpx --approve-reads codex "analyze the codebase structure"
+
+# Deny all tool access
+acpx --deny-all codex "explain the architecture without reading files"
+```
+
+### Non-Interactive Environments
+
+For CI/CD or background agents:
+
+```bash
+# Fail if permission prompt would be needed
+acpx --non-interactive-permissions fail --approve-reads codex "review changes"
+
+# Deny silently if permission prompt would be needed (default)
+acpx --non-interactive-permissions deny codex "review changes"
+```
+
+## Cancellation and Control
+
+### Cooperative Cancellation
+
+Agents can cancel in-flight requests:
+
+```bash
+# In terminal 1
+acpx codex "analyze the entire 50GB dataset"
+
+# In terminal 2 (or from orchestrator)
+acpx codex cancel
+```
+
+The coding agent receives `session/cancel` and stops gracefully.
+
+### Mode Switching
+
+Some adapters support mode changes:
+
+```bash
+# Set reasoning mode (adapter-specific)
+acpx codex set-mode plan
+acpx codex "design the new feature architecture"
+
+# Back to code mode
+acpx codex set-mode code
+acpx codex "implement the design"
+```
+
+<Note>
+Mode IDs are adapter-defined. Check your adapter's documentation for supported modes.
+</Note>
+
+## Working Directory Scoping
+
+### Multi-Repository Orchestration
+
+```bash
+# Work on backend repo
+acpx --cwd ~/repos/backend codex sessions ensure
+acpx --cwd ~/repos/backend codex "update the API schema"
+
+# Work on frontend repo  
+acpx --cwd ~/repos/frontend codex sessions ensure
+acpx --cwd ~/repos/frontend codex "update the API client"
+
+# Work on docs repo
+acpx --cwd ~/repos/docs codex sessions ensure  
+acpx --cwd ~/repos/docs codex "document the API changes"
+```
+
+Each `--cwd` maintains separate session state.
+
+## Fire-and-Forget Pattern
+
+Orchestrators can queue work without blocking:
+
+```bash
+# Enqueue prompt and return immediately
+acpx --no-wait codex "generate test coverage report"
+
+# Orchestrator continues immediately
+echo "Report generation started in background"
+
+# Check status later
+acpx codex status
+```
+
+The coding agent processes the queued prompt while the orchestrator continues.
+
+## Best Practices
+
+<Steps>
+
+<Step title="Use JSON format for parsing">
+Always use `--format json` when the orchestrator needs to parse output programmatically.
+</Step>
+
+<Step title="Handle exit codes">
+Check exit codes to distinguish success, errors, and special conditions like missing sessions.
+</Step>
+
+<Step title="Set appropriate permissions">
+Use `--approve-all` for trusted workloads, `--approve-reads` for analysis tasks.
+</Step>
+
+<Step title="Use named sessions for parallel work">
+When orchestrating multiple workstreams, use `-s <name>` to keep contexts separate.
+</Step>
+
+<Step title="Close sessions when done">
+Run `sessions close` to clean up resources when a workstream completes.
+</Step>
+
+<Step title="Configure timeouts for long tasks">
+Use `--timeout` for operations that may take longer than the default.
+</Step>
+
+</Steps>
+
+## Example: Full Orchestration Flow
+
+Putting it all together:
+
+```bash
+#!/bin/bash
+set -e
+
+# Setup
+REPO="~/repos/api"
+SESSION="security-audit"
+
+# Create dedicated session
+acpx --cwd "$REPO" codex sessions ensure --name "$SESSION"
+
+# Phase 1: Analysis (JSON output for parsing)
+VULNS=$(acpx --cwd "$REPO" --format json codex -s "$SESSION" \
+  "scan auth module for security vulnerabilities" \
+  | jq -r 'select(.params.sessionUpdate=="agent_message_chunk") | .params.content.text' \
+  | tr -d '\n')
+
+echo "Found issues: $VULNS"
+
+# Phase 2: Fix (auto-approve for trusted operation)
+acpx --cwd "$REPO" --approve-all codex -s "$SESSION" \
+  "fix the security issues you identified"
+
+# Phase 3: Verify
+acpx --cwd "$REPO" codex -s "$SESSION" \
+  "run security tests and confirm issues are resolved"
+
+# Cleanup
+acpx --cwd "$REPO" codex sessions close "$SESSION"
+echo "Security audit complete"
+```
+
+This orchestrator:
+1. Creates an isolated session
+2. Delegates analysis with structured output
+3. Parses results
+4. Delegates fixes with auto-approval
+5. Verifies the work
+6. Cleans up resources
+
+## See Also
+
+- [Orchestration Workflows](/advanced/orchestration) - Building complex multi-step workflows
+- [Automation Patterns](/advanced/automation) - CI/CD and scripting patterns
+- [Configuration](/guides/configuration) - Config files and defaults

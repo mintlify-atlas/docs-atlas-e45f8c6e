@@ -1,0 +1,600 @@
+---
+title: Other Built-in Agents
+description: Documentation for Gemini, Cursor, Copilot, Droid, iFlow, Kilocode, Kimi, Kiro, OpenCode, and Qwen
+---
+
+This page covers the remaining built-in agents supported by acpx. All of these agents follow the same basic usage patterns as the primary agents, with some specific configuration notes.
+
+## Agent Overview
+
+<CardGroup cols={2}>
+  <Card title="Gemini" icon="gem">
+    Google's Gemini CLI with native ACP support
+  </Card>
+  <Card title="Cursor" icon="cursor">
+    Cursor's command-line agent interface
+  </Card>
+  <Card title="Copilot" icon="github">
+    GitHub Copilot CLI with ACP mode
+  </Card>
+  <Card title="Droid" icon="robot">
+    Factory.ai's Droid agent
+  </Card>
+  <Card title="iFlow" icon="flow">
+    iFlow CLI with experimental ACP
+  </Card>
+  <Card title="Kilocode" icon="k">
+    Kilocode AI coding agent
+  </Card>
+  <Card title="Kimi" icon="moon">
+    Moonshot AI's Kimi CLI
+  </Card>
+  <Card title="Kiro" icon="circle-nodes">
+    Kiro development agent
+  </Card>
+  <Card title="OpenCode" icon="code">
+    OpenCode AI agent
+  </Card>
+  <Card title="Qwen" icon="brain">
+    Qwen Code from Alibaba
+  </Card>
+</CardGroup>
+
+## Gemini
+
+### Overview
+
+- **Built-in name**: `gemini`
+- **Command**: `gemini --acp`
+- **Upstream**: [Gemini CLI](https://github.com/google/gemini-cli)
+- **Type**: Native ACP support
+
+### Installation
+
+Install the Gemini CLI:
+
+```bash
+# Follow instructions at github.com/google/gemini-cli
+gemini --version
+```
+
+### Basic Usage
+
+```bash
+# Create session
+acpx gemini sessions new
+
+# Send prompt
+acpx gemini "analyze the codebase"
+
+# One-shot execution
+acpx gemini exec "summarize changes"
+```
+
+### Example
+
+```bash
+# Create a review session
+acpx gemini sessions new --name review
+acpx --approve-reads gemini -s review "review code quality"
+```
+
+---
+
+## Cursor
+
+### Overview
+
+- **Built-in name**: `cursor`
+- **Command**: `cursor-agent acp`
+- **Upstream**: [Cursor CLI](https://cursor.com/docs/cli/acp)
+- **Type**: Native ACP support
+
+### Installation
+
+Install Cursor and ensure the CLI is available:
+
+```bash
+cursor-agent --version
+```
+
+### Alternative Command Names
+
+Some Cursor installations expose ACP as `agent acp` instead. Override in config:
+
+```json
+{
+  "agents": {
+    "cursor": {
+      "command": "agent acp"
+    }
+  }
+}
+```
+
+### Basic Usage
+
+```bash
+# Create session
+acpx cursor sessions new
+
+# Send prompt
+acpx cursor "implement feature"
+
+# One-shot execution
+acpx cursor exec "explain architecture"
+```
+
+### Example
+
+```bash
+# Multi-file refactoring
+acpx cursor sessions new --name refactor
+acpx --approve-all cursor -s refactor "refactor to TypeScript"
+```
+
+---
+
+## Copilot
+
+### Overview
+
+- **Built-in name**: `copilot`
+- **Command**: `copilot --acp --stdio`
+- **Upstream**: [GitHub Copilot CLI](https://docs.github.com/copilot/how-tos/copilot-chat/use-copilot-chat-in-the-command-line)
+- **Type**: Native ACP support
+
+### Prerequisites
+
+<Warning>
+  Requires a GitHub Copilot CLI release that supports ACP stdio mode. Older `copilot` binaries will fail before ACP startup.
+</Warning>
+
+### Installation
+
+Install GitHub Copilot CLI:
+
+```bash
+# Follow GitHub's installation instructions
+copilot --version
+```
+
+### Basic Usage
+
+```bash
+# Create session
+acpx copilot sessions new
+
+# Send prompt
+acpx copilot "suggest optimizations"
+
+# One-shot execution
+acpx copilot exec "explain this function"
+```
+
+### Example
+
+```bash
+# Code explanation session
+acpx copilot sessions new --name explain
+acpx copilot -s explain "explain the authentication flow"
+```
+
+---
+
+## Droid
+
+### Overview
+
+- **Built-in name**: `droid`
+- **Command**: `droid exec --output-format acp`
+- **Upstream**: [Factory Droid](https://www.factory.ai)
+- **Type**: Native ACP support
+
+### Installation
+
+Install Factory Droid:
+
+```bash
+# Visit factory.ai for installation
+droid --version
+```
+
+### Basic Usage
+
+```bash
+# Create session
+acpx droid sessions new
+
+# Send prompt
+acpx droid "build feature"
+
+# One-shot execution
+acpx droid exec "analyze dependencies"
+```
+
+### Example
+
+```bash
+# Factory automation workflow
+acpx droid sessions new --name factory
+acpx --approve-all droid -s factory "automate deployment"
+```
+
+---
+
+## iFlow
+
+### Overview
+
+- **Built-in name**: `iflow`
+- **Command**: `iflow --experimental-acp`
+- **Upstream**: [iFlow CLI](https://github.com/iflow-ai/iflow-cli)
+- **Type**: Native ACP support (experimental)
+
+<Warning>
+  iFlow ACP support is experimental. Behavior may change in future releases.
+</Warning>
+
+### Installation
+
+Install iFlow CLI:
+
+```bash
+# Follow instructions at github.com/iflow-ai/iflow-cli
+iflow --version
+```
+
+### Basic Usage
+
+```bash
+# Create session
+acpx iflow sessions new
+
+# Send prompt
+acpx iflow "create workflow"
+
+# One-shot execution
+acpx iflow exec "analyze flow"
+```
+
+### Example
+
+```bash
+# Workflow automation
+acpx iflow sessions new --name workflow
+acpx iflow -s workflow "create CI/CD pipeline"
+```
+
+---
+
+## Kilocode
+
+### Overview
+
+- **Built-in name**: `kilocode`
+- **Command**: `npx -y @kilocode/cli acp`
+- **Upstream**: [Kilocode](https://kilocode.ai)
+- **Type**: CLI wrapper with ACP support
+
+### Installation
+
+No manual installation required. The CLI is auto-downloaded via `npx`.
+
+### Basic Usage
+
+```bash
+# Create session
+acpx kilocode sessions new
+
+# Send prompt
+acpx kilocode "implement feature"
+
+# One-shot execution
+acpx kilocode exec "review code"
+```
+
+### Example
+
+```bash
+# Large-scale refactoring
+acpx kilocode sessions new --name refactor
+acpx --approve-all kilocode -s refactor "refactor legacy code"
+```
+
+---
+
+## Kimi
+
+### Overview
+
+- **Built-in name**: `kimi`
+- **Command**: `kimi acp`
+- **Upstream**: [Kimi CLI](https://github.com/MoonshotAI/kimi-cli)
+- **Type**: Native ACP support
+
+### Installation
+
+Install Kimi CLI:
+
+```bash
+# Follow instructions at github.com/MoonshotAI/kimi-cli
+kimi --version
+```
+
+### Basic Usage
+
+```bash
+# Create session
+acpx kimi sessions new
+
+# Send prompt
+acpx kimi "analyze performance"
+
+# One-shot execution
+acpx kimi exec "suggest improvements"
+```
+
+### Example
+
+```bash
+# Performance optimization
+acpx kimi sessions new --name perf
+acpx kimi -s perf "identify performance bottlenecks"
+```
+
+---
+
+## Kiro
+
+### Overview
+
+- **Built-in name**: `kiro`
+- **Command**: `kiro-cli acp`
+- **Upstream**: [Kiro CLI](https://kiro.dev)
+- **Type**: Native ACP support
+
+### Installation
+
+Install Kiro CLI:
+
+```bash
+# Visit kiro.dev for installation
+kiro-cli --version
+```
+
+### Basic Usage
+
+```bash
+# Create session
+acpx kiro sessions new
+
+# Send prompt
+acpx kiro "implement feature"
+
+# One-shot execution
+acpx kiro exec "explain code"
+```
+
+### Example
+
+```bash
+# Development workflow
+acpx kiro sessions new --name dev
+acpx --approve-all kiro -s dev "add authentication"
+```
+
+---
+
+## OpenCode
+
+### Overview
+
+- **Built-in name**: `opencode`
+- **Command**: `npx -y opencode-ai acp`
+- **Upstream**: [OpenCode](https://opencode.ai)
+- **Type**: CLI wrapper with ACP support
+
+### Installation
+
+No manual installation required. The CLI is auto-downloaded via `npx`.
+
+### Basic Usage
+
+```bash
+# Create session
+acpx opencode sessions new
+
+# Send prompt
+acpx opencode "write tests"
+
+# One-shot execution
+acpx opencode exec "review changes"
+```
+
+### Example
+
+```bash
+# Test generation
+acpx opencode sessions new --name testing
+acpx --approve-all opencode -s testing "generate unit tests"
+```
+
+---
+
+## Qwen
+
+### Overview
+
+- **Built-in name**: `qwen`
+- **Command**: `qwen --acp`
+- **Upstream**: [Qwen Code](https://github.com/QwenLM/qwen-code)
+- **Type**: Native ACP support
+
+### Installation
+
+Install Qwen Code:
+
+```bash
+# Follow instructions at github.com/QwenLM/qwen-code
+qwen --version
+```
+
+### Basic Usage
+
+```bash
+# Create session
+acpx qwen sessions new
+
+# Send prompt
+acpx qwen "implement algorithm"
+
+# One-shot execution
+acpx qwen exec "analyze complexity"
+```
+
+### Example
+
+```bash
+# Algorithm implementation
+acpx qwen sessions new --name algo
+acpx --approve-all qwen -s algo "implement binary search tree"
+```
+
+---
+
+## Common Patterns
+
+All these agents support the same core acpx features:
+
+### Session Management
+
+```bash
+# Works with any agent
+acpx <agent> sessions new
+acpx <agent> sessions new --name <name>
+acpx <agent> sessions list
+acpx <agent> sessions show
+acpx <agent> sessions history
+acpx <agent> sessions close [name]
+```
+
+### Session Controls
+
+```bash
+acpx <agent> status
+acpx <agent> cancel
+acpx <agent> set-mode <mode>
+acpx <agent> set <key> <value>
+```
+
+### Prompt Input
+
+```bash
+acpx <agent> "direct prompt"
+acpx <agent> --file prompt.md
+echo "prompt" | acpx <agent>
+acpx <agent> --file - "extra context"
+```
+
+### Output Formats
+
+```bash
+acpx --format text <agent> "prompt"
+acpx --format json <agent> exec "prompt"
+acpx --format json --json-strict <agent> exec "prompt"
+acpx --format quiet <agent> "prompt"
+```
+
+### Permissions
+
+```bash
+acpx --approve-all <agent> "prompt"
+acpx --approve-reads <agent> "prompt"
+acpx --deny-all <agent> "prompt"
+acpx --non-interactive-permissions <deny|fail> <agent> "prompt"
+```
+
+### Queue Management
+
+```bash
+acpx --no-wait <agent> "prompt"
+acpx --ttl <seconds> <agent> "prompt"
+```
+
+## Configuration
+
+All agents can be configured in `~/.acpx/cli/config.json` or `.acpxrc.json`:
+
+```json
+{
+  "agents": {
+    "gemini": { "command": "gemini --acp" },
+    "cursor": { "command": "agent acp" },
+    "copilot": { "command": "copilot --acp --stdio" },
+    "droid": { "command": "droid exec --output-format acp" },
+    "iflow": { "command": "iflow --experimental-acp" },
+    "kilocode": { "command": "npx -y @kilocode/cli acp" },
+    "kimi": { "command": "kimi acp" },
+    "kiro": { "command": "kiro-cli acp" },
+    "opencode": { "command": "npx -y opencode-ai acp" },
+    "qwen": { "command": "qwen --acp" }
+  }
+}
+```
+
+## Troubleshooting
+
+### Agent Not Found
+
+Ensure the agent CLI is installed and in your PATH:
+
+```bash
+<agent-command> --version
+```
+
+### Command Not Recognized
+
+Some agents may have different command names on your system. Override in config:
+
+```json
+{
+  "agents": {
+    "<agent>": { "command": "<your-command>" }
+  }
+}
+```
+
+### Session Creation Fails
+
+Check that the agent supports ACP:
+
+```bash
+# Test direct invocation
+<agent-command> --help | grep -i acp
+```
+
+### Permission Issues
+
+Use appropriate permission flags:
+
+```bash
+acpx --approve-all <agent> "task"
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Primary Agents" icon="star" href="/agents/overview">
+    Learn about Pi, OpenClaw, Codex, and Claude
+  </Card>
+  <Card title="Custom Agents" icon="wrench" href="/guides/custom-agents">
+    Add your own ACP-compatible agents
+  </Card>
+  <Card title="Configuration" icon="gear" href="/guides/configuration">
+    Customize agent commands and behavior
+  </Card>
+  <Card title="Sessions" icon="layer-group" href="/cli/sessions">
+    Master session management
+  </Card>
+</CardGroup>

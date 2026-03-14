@@ -1,0 +1,264 @@
+---
+title: "exec"
+description: "Run one-shot prompts without saved sessions"
+---
+
+## Overview
+
+The `exec` command runs a single prompt in a temporary ACP session without saving any session state. It's designed for stateless, fire-and-forget tasks where conversation history is not needed.
+
+## Syntax
+
+```bash
+acpx [global_options] <agent> exec [prompt_options] [prompt_text...]
+acpx [global_options] exec [prompt_options] [prompt_text...]  # defaults to codex
+```
+
+## Behavior
+
+1. **Creates Temporary Session**: Starts a fresh ACP session
+2. **Sends Prompt Once**: Submits the prompt and waits for completion
+3. **No Persistence**: Does not write or use a saved session record
+4. **Terminates**: Shuts down the ACP session after the prompt completes
+
+Unlike `prompt`, `exec` does not participate in session routing, directory-walk lookup, or queue management. Each invocation is completely isolated.
+
+<Note>
+Use `exec` for quick queries, one-off analyses, or when you don't need conversation history. For multi-turn interactions, use `prompt` with a persistent session.
+</Note>
+
+## Prompt Options
+
+<ParamField path="-f, --file" type="string">
+  Read prompt text from file. Use `-` for stdin. Can be combined with additional prompt arguments.
+</ParamField>
+
+<Note>
+The `-s, --session` and `--no-wait` options are not available for `exec` because it does not use persistent sessions or queueing.
+</Note>
+
+## Prompt Input
+
+Prompts can be provided in multiple ways:
+
+1. **Command arguments**: `acpx exec "what does this repo do?"`
+2. **Stdin (piped)**: `echo "summarize changes" | acpx exec`
+3. **File**: `acpx exec --file question.md`
+4. **Stdin explicit**: `acpx exec --file - "extra context"`
+
+If prompt arguments are omitted and stdin is not a TTY, acpx reads from stdin automatically.
+
+## Examples
+
+### Basic Usage
+
+```bash
+# Quick query with default agent (codex)
+acpx exec "what does this repo do?"
+
+# Specific agent
+acpx codex exec "summarize the auth module"
+acpx claude exec "analyze the test coverage"
+acpx pi exec "review recent changes"
+```
+
+### Prompt from Different Sources
+
+```bash
+# From command arguments
+acpx exec "list all TODO items in src/"
+
+# From stdin (piped)
+cat requirements.txt | acpx exec "analyze dependencies for security issues"
+
+# From file
+acpx exec --file analysis-prompt.md
+
+# From stdin (explicit) with context
+echo "review this code" | acpx exec --file - "focus on performance"
+```
+
+### Output Formats
+
+```bash
+# Human-readable text (default)
+acpx exec "summarize changes in the last commit"
+
+# JSON for automation
+acpx --format json exec "review this PR" | jq -r '.type'
+
+# JSON strict (no stderr pollution)
+acpx --format json --json-strict exec "machine-safe analysis"
+
+# Quiet mode (assistant text only)
+acpx --format quiet exec "give me a 3-line summary"
+```
+
+### Permission Control
+
+```bash
+# Auto-approve all permissions
+acpx --approve-all exec "run tests and report failures"
+
+# Auto-approve reads only (default)
+acpx --approve-reads exec "analyze codebase structure"
+
+# Deny all permissions
+acpx --deny-all exec "explain what you can do without tools"
+```
+
+### Working Directory
+
+```bash
+# Analyze different project
+acpx --cwd ~/repos/api exec "review authentication flow"
+
+# Multiple projects in sequence
+acpx --cwd ~/repos/frontend exec "check for unused components"
+acpx --cwd ~/repos/backend exec "check for unused endpoints"
+```
+
+## Use Cases
+
+### Quick Analysis
+
+```bash
+# Summarize a file
+acpx exec "summarize src/auth/login.ts in 5 bullets"
+
+# Explain a concept
+acpx exec "explain the difference between ACP and MCP"
+
+# Review changes
+git diff | acpx exec --file - "review these changes for issues"
+```
+
+### Code Review
+
+```bash
+# Review staged changes
+git diff --staged | acpx --approve-reads exec --file - "review for security"
+
+# Review specific commit
+git show abc123 | acpx exec --file - "analyze this commit"
+```
+
+### Automation Pipelines
+
+```bash
+# Extract structured data
+acpx --format json exec "list all exported functions in src/" \
+  | jq -r '.[] | .name'
+
+# Machine-safe JSON output
+acpx --format json --json-strict exec "analyze test coverage" \
+  > analysis.json
+
+# Quiet mode for scripts
+SUMMARY=$(acpx --format quiet exec "summarize changes in one sentence")
+echo "Commit message: $SUMMARY"
+```
+
+### CI/CD Integration
+
+```bash
+# Pre-commit hook
+acpx --format quiet --timeout 30 exec \
+  "check staged changes for obvious bugs" \
+  > .git/pre-commit-check
+
+# PR validation
+acpx --format json --json-strict exec \
+  "review PR changes and rate severity" \
+  | jq '.severity'
+```
+
+## Configuration Scope
+
+The `exec` command can be disabled via configuration:
+
+```json
+{
+  "disableExec": true
+}
+```
+
+When disabled, `exec` commands exit with error code `1` and message:
+
+```
+Error: exec subcommand is disabled by configuration (disableExec: true)
+```
+
+This is useful in environments where all agent interactions should be audited through persistent sessions.
+
+## Output
+
+### Text Format (Default)
+
+```bash
+acpx exec "review changes"
+```
+
+Output includes:
+- Assistant text
+- Tool status blocks
+- `[done] <reason>` at completion
+
+### JSON Format
+
+```bash
+acpx --format json exec "analyze code"
+```
+
+Raw ACP JSON-RPC messages:
+
+```json
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Analyzing..."}}}
+{"jsonrpc":"2.0","id":"req-1","result":{"stopReason":"end_turn"}}
+```
+
+### Quiet Format
+
+```bash
+acpx --format quiet exec "one-line summary"
+```
+
+Assistant text only.
+
+## Error Codes
+
+| Code | Meaning |
+|------|-------|
+| `0` | Success |
+| `1` | Agent/protocol/runtime error, or exec disabled |
+| `3` | Timeout |
+| `5` | Permission denied |
+| `130` | Interrupted (Ctrl+C) |
+
+## Comparison: exec vs prompt
+
+| Feature | exec | prompt |
+|---------|------|--------|
+| Session persistence | No | Yes |
+| Conversation history | No | Yes |
+| Session scoping | N/A | By agent, cwd, name |
+| Queue support | No | Yes |
+| Auto-resume | N/A | Yes |
+| Named sessions | No | Yes |
+| Fire-and-forget (`--no-wait`) | N/A | Yes |
+| Use case | One-off queries | Multi-turn workflows |
+
+## Performance Considerations
+
+- **Startup overhead**: Each `exec` invocation starts a fresh agent process
+- **No warm sessions**: Cannot reuse existing agent connections
+- **Best for**: Infrequent queries, CI/CD, automation scripts
+- **Not ideal for**: Interactive workflows, rapid iteration, context-dependent queries
+
+For interactive development, use `prompt` with persistent sessions to avoid repeated startup costs.
+
+## See Also
+
+- [prompt](/cli/prompt) - Send prompts to persistent sessions
+- [sessions](/cli/sessions) - Manage persistent sessions
+- [Overview](/cli/overview) - CLI grammar and global options

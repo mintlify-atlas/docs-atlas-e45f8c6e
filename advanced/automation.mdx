@@ -1,0 +1,608 @@
+---
+title: Automation Patterns
+description: Use acpx in CI/CD pipelines, scripts, and automated workflows with JSON output parsing
+---
+
+## Overview
+
+Automation with acpx means running coding agents in **non-interactive environments** like CI/CD pipelines, cron jobs, and automated scripts.
+
+Key automation capabilities:
+- **JSON output** for structured parsing
+- **Exit codes** for workflow decisions
+- **Non-interactive permissions** for unattended execution
+- **Session state** for workflow checkpointing
+- **One-shot exec** for stateless operations
+
+## JSON Output Format
+
+### Raw ACP Messages
+
+When using `--format json`, acpx emits raw ACP JSON-RPC messages (one per line):
+
+```bash
+acpx --format json codex exec "review auth.ts for issues"
+```
+
+Output is NDJSON (newline-delimited JSON):
+
+```json
+{"jsonrpc":"2.0","id":"req-1","method":"session/prompt","params":{"sessionId":"019c...","prompt":"review auth.ts for issues"}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"Analyzing authentication module..."}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionUpdate":"tool_call","toolCallId":"tool_1","title":"Read src/auth.ts","status":"in_progress"}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionUpdate":"tool_call_update","toolCallId":"tool_1","status":"completed"}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Found 3 potential security issues..."}}}
+{"jsonrpc":"2.0","id":"req-1","result":{"stopReason":"end_turn"}}
+```
+
+### Strict JSON Mode
+
+For machine-only consumption, suppress non-JSON stderr:
+
+```bash
+acpx --format json --json-strict codex exec "analyze code"
+```
+
+This ensures:
+- Only JSON on stdout (one message per line)
+- No human-readable text mixed in
+- Safe for pipeline parsing
+
+## Parsing JSON Output
+
+### Using jq for Extraction
+
+<CodeGroup>
+
+```bash Extract tool calls
+acpx --format json codex exec "audit security" \
+  | jq -r 'select(.method=="session/update" and .params.sessionUpdate=="tool_call") | .params.title'
+```
+
+```bash Extract thinking
+acpx --format json codex exec "explain the bug" \
+  | jq -r 'select(.method=="session/update" and .params.sessionUpdate=="agent_thought_chunk") | .params.content.text'
+```
+
+```bash Extract final response
+acpx --format json codex exec "summarize findings" \
+  | jq -r 'select(.method=="session/update" and .params.sessionUpdate=="agent_message_chunk") | .params.content.text' \
+  | tr -d '\n'
+```
+
+```bash Get stop reason
+acpx --format json codex exec "complete task" \
+  | jq -r 'select(.result.stopReason) | .result.stopReason'
+```
+
+</CodeGroup>
+
+### Filtering by Message Type
+
+```bash
+# Only show tool executions
+acpx --format json codex exec "fix tests" \
+  | jq -r '
+    select(.method=="session/update" and 
+           (.params.sessionUpdate=="tool_call" or 
+            .params.sessionUpdate=="tool_call_update")) 
+    | [.params.toolCallId, .params.status, .params.title] | @tsv'
+
+# Only show final result
+acpx --format json codex exec "analyze code" \
+  | jq -r 'select(.result) | .result'
+```
+
+### Building Structured Reports
+
+```bash
+#!/bin/bash
+
+# Run analysis and parse results
+OUTPUT=$(acpx --format json codex exec "audit codebase for issues")
+
+# Extract different message types
+THINKING=$(echo "$OUTPUT" | jq -r '
+  select(.params.sessionUpdate=="agent_thought_chunk") 
+  | .params.content.text' | head -1)
+
+TOOLS=$(echo "$OUTPUT" | jq -r '
+  select(.params.sessionUpdate=="tool_call") 
+  | .params.title')
+
+FINDINGS=$(echo "$OUTPUT" | jq -r '
+  select(.params.sessionUpdate=="agent_message_chunk") 
+  | .params.content.text' | tr -d '\n')
+
+# Generate report
+cat <<EOF > report.md
+# Code Audit Report
+
+## Analysis Approach
+$THINKING
+
+## Tools Used
+$TOOLS
+
+## Findings
+$FINDINGS
+EOF
+
+echo "Report generated: report.md"
+```
+
+## CI/CD Integration
+
+### GitHub Actions Example
+
+```yaml
+name: Code Review Bot
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install acpx
+        run: npm install -g acpx@latest
+      
+      - name: Review changes
+        id: review
+        run: |
+          REVIEW=$(acpx --format quiet \
+            --approve-reads \
+            --non-interactive-permissions fail \
+            codex exec "Review the changes in this PR for bugs and security issues")
+          
+          echo "review<<EOF" >> $GITHUB_OUTPUT
+          echo "$REVIEW" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+      
+      - name: Post comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '## AI Code Review\n\n' + '${{ steps.review.outputs.review }}'
+            })
+```
+
+### GitLab CI Example
+
+```yaml
+stages:
+  - review
+  - test
+
+code_review:
+  stage: review
+  image: node:22
+  script:
+    - npm install -g acpx@latest
+    - |
+      acpx --format json \
+        --approve-reads \
+        --non-interactive-permissions fail \
+        --timeout 300 \
+        codex exec "Review this MR for issues" \
+        | jq -r 'select(.params.sessionUpdate=="agent_message_chunk") | .params.content.text' \
+        > review.txt
+    - cat review.txt
+  artifacts:
+    paths:
+      - review.txt
+    expire_in: 1 week
+  only:
+    - merge_requests
+```
+
+### Jenkins Pipeline Example
+
+```groovy
+pipeline {
+    agent any
+    
+    stages {
+        stage('Setup') {
+            steps {
+                sh 'npm install -g acpx@latest'
+            }
+        }
+        
+        stage('Code Analysis') {
+            steps {
+                script {
+                    def analysis = sh(
+                        script: '''acpx --format quiet \
+                            --approve-reads \
+                            --non-interactive-permissions fail \
+                            codex exec "Analyze code quality and suggest improvements"''',
+                        returnStdout: true
+                    ).trim()
+                    
+                    writeFile file: 'analysis.txt', text: analysis
+                    archiveArtifacts artifacts: 'analysis.txt'
+                    
+                    echo "Analysis complete: ${analysis.take(200)}..."
+                }
+            }
+        }
+        
+        stage('Security Scan') {
+            steps {
+                script {
+                    def exitCode = sh(
+                        script: '''acpx --format json --json-strict \
+                            --approve-reads \
+                            codex exec "Scan for security vulnerabilities" \
+                            | jq -r 'select(.params.sessionUpdate=="agent_message_chunk") | .params.content.text' \
+                            | tee security.txt''',
+                        returnStatus: true
+                    )
+                    
+                    if (exitCode != 0) {
+                        error("Security scan failed with exit code ${exitCode}")
+                    }
+                }
+            }
+        }
+    }
+}
+```
+
+## Exit Code Handling
+
+### Exit Code Reference
+
+| Code | Meaning | Example Handling |
+|------|---------|------------------|
+| `0` | Success | Continue pipeline |
+| `1` | Runtime error | Retry or fail build |
+| `2` | Usage error | Fix command syntax |
+| `3` | Timeout | Increase `--timeout` or fail |
+| `4` | No session | Run `sessions ensure` first |
+| `5` | Permission denied | Check `--approve-*` flags |
+| `130` | Interrupted | Treat as fatal |
+
+### Script Example with Exit Codes
+
+```bash
+#!/bin/bash
+set -e
+
+run_analysis() {
+  acpx --format quiet \
+    --approve-reads \
+    --non-interactive-permissions fail \
+    --timeout 180 \
+    codex exec "$1"
+  
+  local exit_code=$?
+  
+  case $exit_code in
+    0)
+      echo "✓ Analysis complete"
+      return 0
+      ;;
+    1)
+      echo "✗ Runtime error during analysis"
+      return 1
+      ;;
+    3)
+      echo "✗ Analysis timed out (increase --timeout)"
+      return 1
+      ;;
+    5)
+      echo "✗ Permission denied (check --approve flags)"
+      return 1
+      ;;
+    130)
+      echo "✗ Analysis interrupted"
+      return 1
+      ;;
+    *)
+      echo "✗ Unknown error: $exit_code"
+      return 1
+      ;;
+  esac
+}
+
+run_analysis "Review code for security issues" || exit 1
+run_analysis "Check for performance problems" || exit 1
+run_analysis "Identify code quality issues" || exit 1
+
+echo "All analyses passed"
+```
+
+## Permission Configuration
+
+### Non-Interactive Permissions
+
+For automated environments, configure permission behavior:
+
+<CodeGroup>
+
+```bash Deny silently (default)
+# Safe for untrusted inputs - denies write operations
+acpx --approve-reads \
+  --non-interactive-permissions deny \
+  codex exec "analyze this code"
+```
+
+```bash Fail explicitly
+# Strict mode - fails if permission prompt would be needed
+acpx --approve-reads \
+  --non-interactive-permissions fail \
+  codex exec "analyze this code"
+```
+
+```bash Auto-approve all
+# Trusted environment - allows all operations
+acpx --approve-all \
+  codex exec "fix the bug and run tests"
+```
+
+</CodeGroup>
+
+### Permission Strategy by Use Case
+
+| Use Case | Recommended Flags |
+|----------|------------------|
+| Code review | `--approve-reads --non-interactive-permissions fail` |
+| Static analysis | `--approve-reads --non-interactive-permissions deny` |
+| Automated fixes | `--approve-all` (trusted only) |
+| Security scan | `--deny-all` (no tool execution) |
+
+## One-Shot vs Persistent Sessions
+
+### One-Shot with exec
+
+For stateless automation, use `exec`:
+
+```bash
+# No session state, no persistence
+acpx codex exec "summarize recent changes"
+
+# Each exec is independent
+acpx codex exec "check test coverage"
+acpx codex exec "analyze performance"
+```
+
+Best for:
+- Independent CI/CD checks
+- Stateless analysis tasks
+- Parallel job execution
+
+### Persistent Sessions
+
+For stateful workflows:
+
+```bash
+# Create session
+acpx codex sessions ensure --name ci-workflow
+
+# Multi-turn analysis with shared context
+acpx codex -s ci-workflow "analyze the codebase"
+acpx codex -s ci-workflow "now identify the top 3 issues"
+acpx codex -s ci-workflow "suggest fixes for those issues"
+
+# Cleanup
+acpx codex sessions close ci-workflow
+```
+
+Best for:
+- Multi-step workflows
+- Context-dependent analysis
+- Incremental processing
+
+## Cron Job Integration
+
+### Daily Code Health Check
+
+```bash
+#!/bin/bash
+# /etc/cron.daily/code-health-check
+
+REPO="/var/repos/production"
+REPORT="/var/reports/code-health-$(date +%Y%m%d).txt"
+
+cd "$REPO" || exit 1
+
+# Run health check
+acpx --format quiet \
+  --approve-reads \
+  --non-interactive-permissions deny \
+  --timeout 600 \
+  codex exec "Analyze code health: check for tech debt, security issues, and performance problems" \
+  > "$REPORT"
+
+if [ $? -eq 0 ]; then
+  # Email report
+  mail -s "Daily Code Health Report" team@example.com < "$REPORT"
+else
+  echo "Health check failed" | mail -s "Code Health Check FAILED" team@example.com
+fi
+```
+
+### Weekly Dependency Audit
+
+```bash
+#!/bin/bash
+# Weekly dependency security audit
+
+OUTPUT=$(acpx --format json \
+  --approve-reads \
+  --timeout 300 \
+  codex exec "Audit package.json dependencies for security vulnerabilities and outdated packages")
+
+# Extract findings
+FINDINGS=$(echo "$OUTPUT" | jq -r '
+  select(.params.sessionUpdate=="agent_message_chunk") 
+  | .params.content.text' | tr -d '\n')
+
+# Check for critical issues
+if echo "$FINDINGS" | grep -qi "critical\|high\|vulnerable"; then
+  echo "⚠️ Critical security issues found" | mail -s "URGENT: Dependency Vulnerabilities" security@example.com
+  echo "$FINDINGS" | mail -s "Dependency Audit Details" security@example.com
+else
+  echo "✓ No critical issues found"
+fi
+```
+
+## Docker Integration
+
+### Dockerfile for acpx Automation
+
+```dockerfile
+FROM node:22-slim
+
+# Install acpx
+RUN npm install -g acpx@latest
+
+# Install jq for JSON parsing
+RUN apt-get update && apt-get install -y jq && rm -rf /var/lib/apt/lists/*
+
+# Copy automation scripts
+COPY scripts/ /scripts/
+RUN chmod +x /scripts/*.sh
+
+WORKDIR /workspace
+
+ENTRYPOINT ["/scripts/run-automation.sh"]
+```
+
+### Docker Compose Example
+
+```yaml
+version: '3.8'
+
+services:
+  code-review:
+    image: acpx-automation:latest
+    volumes:
+      - ./repo:/workspace
+      - ./reports:/reports
+    environment:
+      - ACPX_APPROVE=reads
+      - ACPX_TIMEOUT=300
+    command: |
+      acpx --format json 
+        --approve-reads 
+        --non-interactive-permissions fail 
+        codex exec "Review code changes and generate report" 
+        | jq -r 'select(.params.sessionUpdate=="agent_message_chunk") | .params.content.text' 
+        > /reports/review.txt
+```
+
+## Testing Automation Scripts
+
+### Mock Agent for Testing
+
+Test automation scripts without real agent calls:
+
+```bash
+#!/bin/bash
+# mock-acpx.sh - Place in PATH before real acpx for testing
+
+case "$*" in
+  *"review code"*)
+    cat <<'EOF'
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Mock review: Code looks good"}}}
+{"jsonrpc":"2.0","id":"req-1","result":{"stopReason":"end_turn"}}
+EOF
+    exit 0
+    ;;
+  *)
+    echo '{"jsonrpc":"2.0","id":"req-1","result":{"stopReason":"end_turn"}}'
+    exit 0
+    ;;
+esac
+```
+
+## Best Practices
+
+<Steps>
+
+<Step title="Use --format json for parsing">
+Always use `--format json` in automation scripts that need to parse output.
+</Step>
+
+<Step title="Add --json-strict for pipelines">
+Use `--json-strict` with `--format json` to ensure clean machine-readable output.
+</Step>
+
+<Step title="Check exit codes">
+Always check exit codes to handle errors appropriately in automation.
+</Step>
+
+<Step title="Set explicit timeouts">
+Use `--timeout` to prevent automation from hanging indefinitely.
+</Step>
+
+<Step title="Configure non-interactive permissions">
+Use `--non-interactive-permissions fail` to catch permission issues early.
+</Step>
+
+<Step title="Use exec for stateless tasks">
+Use `exec` for independent automation tasks that don't need shared context.
+</Step>
+
+<Step title="Clean up sessions">
+Always close persistent sessions in automation to avoid resource leaks.
+</Step>
+
+<Step title="Log structured output">
+Save JSON output to files for debugging and auditing.
+</Step>
+
+</Steps>
+
+## Troubleshooting
+
+### Common Issues
+
+<CodeGroup>
+
+```bash Permission prompt in CI
+# Problem: Permission prompt blocks in CI
+# Solution: Use --non-interactive-permissions fail
+acpx --approve-reads \
+  --non-interactive-permissions fail \
+  codex exec "analyze code"
+```
+
+```bash Timeout in long tasks
+# Problem: Default timeout too short
+# Solution: Increase --timeout
+acpx --timeout 600 codex exec "comprehensive audit"
+```
+
+```bash Session not found
+# Problem: Automation expects existing session
+# Solution: Use sessions ensure
+acpx codex sessions ensure --name automation
+acpx codex -s automation "task"
+```
+
+```bash Mixed output in JSON mode
+# Problem: Non-JSON text mixed with JSON
+# Solution: Add --json-strict
+acpx --format json --json-strict codex exec "task"
+```
+
+</CodeGroup>
+
+## See Also
+
+- [Agent-to-Agent Communication](/advanced/agent-to-agent) - Core delegation patterns
+- [Orchestration Workflows](/advanced/orchestration) - Multi-step workflows
+- [Configuration](/guides/configuration) - Config files and defaults
+- [Output Formats](/guides/output-formats) - Format options

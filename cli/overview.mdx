@@ -1,0 +1,209 @@
+---
+title: "CLI Overview"
+description: "Command grammar, structure, and core concepts for the acpx CLI"
+---
+
+## Introduction
+
+acpx is a headless ACP client designed for scriptable agent workflows. The CLI provides a consistent interface for managing persistent sessions, sending prompts, and controlling agent behavior across all ACP-compatible agents.
+
+## Default Behavior
+
+The CLI is conversational by default:
+
+- **prompt** commands use a persisted session
+- Session lookup is scoped by agent command, working directory, and optional session name
+- **exec** runs one prompt in a temporary session without saving state
+
+## Command Grammar
+
+The acpx CLI follows a consistent structure. Commands can target the default agent (codex) or specify an explicit agent:
+
+```bash
+# Default agent (codex)
+acpx [global_options] [prompt_text...]
+acpx [global_options] prompt [prompt_options] [prompt_text...]
+acpx [global_options] exec [prompt_options] [prompt_text...]
+acpx [global_options] cancel [-s <name>]
+acpx [global_options] set-mode <mode> [-s <name>]
+acpx [global_options] set <key> <value> [-s <name>]
+acpx [global_options] status [-s <name>]
+acpx [global_options] sessions [subcommand]
+acpx [global_options] config [subcommand]
+
+# Explicit agent
+acpx [global_options] <agent> [prompt_options] [prompt_text...]
+acpx [global_options] <agent> prompt [prompt_options] [prompt_text...]
+acpx [global_options] <agent> exec [prompt_options] [prompt_text...]
+acpx [global_options] <agent> cancel [-s <name>]
+acpx [global_options] <agent> set-mode <mode> [-s <name>]
+acpx [global_options] <agent> set <key> <value> [-s <name>]
+acpx [global_options] <agent> status [-s <name>]
+acpx [global_options] <agent> sessions [subcommand]
+```
+
+## Agent Selection
+
+The `<agent>` token can be:
+
+- **Built-in friendly name**: `pi`, `openclaw`, `codex`, `claude`, `gemini`, `cursor`, `copilot`, etc.
+- **Unknown token**: Treated as a raw command to execute
+- **Override**: Use `--agent <command>` to specify a custom ACP server command
+
+<Note>
+Top-level commands (`prompt`, `exec`, `cancel`, `set-mode`, `set`, `sessions`, `status`) default to the `codex` agent when no agent is specified.
+</Note>
+
+## Prompt Input
+
+Prompts can be provided in multiple ways:
+
+1. **Command arguments**: `acpx codex "fix the tests"`
+2. **Stdin (piped)**: `echo "review changes" | acpx codex`
+3. **File**: `acpx codex --file prompt.md`
+4. **Stdin explicit**: `acpx codex --file -`
+
+If no prompt is provided and stdin is not a TTY, acpx reads from stdin automatically.
+
+## Global Options
+
+Global options apply to all commands and control runtime behavior, permissions, output format, and more.
+
+<ParamField path="--agent" type="string">
+  Raw ACP agent command (escape hatch). Do not combine with positional agent token.
+</ParamField>
+
+<ParamField path="--cwd" type="string">
+  Working directory. Defaults to current directory. Stored as absolute path for session scoping.
+</ParamField>
+
+<ParamField path="--approve-all" type="boolean">
+  Auto-approve all permission requests (permission mode `approve-all`).
+</ParamField>
+
+<ParamField path="--approve-reads" type="boolean">
+  Auto-approve reads/searches, prompt for others. This is the default permission mode.
+</ParamField>
+
+<ParamField path="--deny-all" type="boolean">
+  Deny all permission requests (permission mode `deny-all`).
+</ParamField>
+
+<ParamField path="--format" type="string" default="text">
+  Output format: `text` (human-readable), `json` (NDJSON stream), or `quiet` (assistant text only).
+</ParamField>
+
+<ParamField path="--json-strict" type="boolean">
+  Strict JSON mode. Requires `--format json` and suppresses non-JSON stderr output.
+</ParamField>
+
+<ParamField path="--non-interactive-permissions" type="string" default="deny">
+  Non-TTY prompt policy: `deny` (default) or `fail` when approval prompt cannot be shown.
+</ParamField>
+
+<ParamField path="--timeout" type="number">
+  Maximum wait time for agent response in seconds. Must be positive. Decimal values allowed.
+</ParamField>
+
+<ParamField path="--ttl" type="number" default="300">
+  Queue owner idle TTL in seconds before shutdown. Default is 300. Set to `0` to disable TTL.
+</ParamField>
+
+<ParamField path="--verbose" type="boolean">
+  Enable verbose logs. Prints ACP and debug details to stderr.
+</ParamField>
+
+<Note>
+Permission flags (`--approve-all`, `--approve-reads`, `--deny-all`) are mutually exclusive. Using more than one is a usage error.
+</Note>
+
+## Examples
+
+### Basic Usage
+
+```bash
+# Use default agent (codex)
+acpx "fix the failing tests"
+
+# Use specific agent
+acpx pi "review recent changes"
+acpx openclaw "analyze session state"
+acpx claude "refactor auth module"
+```
+
+### Permission Control
+
+```bash
+# Auto-approve all permissions
+acpx --approve-all codex "apply this patch and run tests"
+
+# Auto-approve reads only (default)
+acpx --approve-reads codex "inspect the repo and propose a plan"
+
+# Deny all permissions
+acpx --deny-all codex "summarize this code without running tools"
+```
+
+### Output Formats
+
+```bash
+# Human-readable text (default)
+acpx codex "review changes"
+
+# JSON stream for automation
+acpx --format json codex exec "summarize TODO items"
+
+# Strict JSON (no stderr pollution)
+acpx --format json --json-strict codex exec "machine-safe output"
+
+# Quiet mode (assistant text only)
+acpx --format quiet codex "give me a summary"
+```
+
+### Advanced Options
+
+```bash
+# Custom working directory
+acpx --cwd ~/repos/api codex "review auth middleware"
+
+# Timeout control
+acpx --timeout 120 codex "investigate flaky test failures"
+
+# TTL control for queue owner
+acpx --ttl 30 codex "keep queue owner warm for quick follow-up"
+
+# Verbose debugging
+acpx --verbose codex "debug adapter startup issues"
+
+# Custom agent command
+acpx --agent ./my-custom-acp-server "do something"
+```
+
+## Exit Codes
+
+| Code | Meaning |
+|------|-------|
+| `0` | Success |
+| `1` | Agent/protocol/runtime error |
+| `2` | CLI usage error |
+| `3` | Timeout |
+| `4` | No session found (prompt requires explicit `sessions new`) |
+| `5` | Permission denied (permission requested, none approved, at least one denied/cancelled) |
+| `130` | Interrupted (SIGINT/SIGTERM) |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Prompt Command" icon="comment" href="/cli/prompt">
+    Send prompts to persistent sessions
+  </Card>
+  <Card title="Exec Command" icon="bolt" href="/cli/exec">
+    One-shot prompts without saved sessions
+  </Card>
+  <Card title="Sessions" icon="layer-group" href="/cli/sessions">
+    Manage persistent session lifecycle
+  </Card>
+  <Card title="Configuration" icon="gear" href="/cli/config">
+    Configure global and project settings
+  </Card>
+</CardGroup>

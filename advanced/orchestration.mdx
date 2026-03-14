@@ -1,0 +1,538 @@
+---
+title: Orchestration Workflows
+description: Build complex multi-step workflows with acpx session management and queueing
+---
+
+## Overview
+
+Orchestration with acpx means building **multi-step workflows** where an orchestrator delegates coding tasks to one or more ACP agents, coordinates their work, and assembles results.
+
+Key orchestration primitives:
+- **Persistent sessions** for multi-turn context
+- **Named sessions** for parallel workstreams
+- **Prompt queueing** for sequential task execution
+- **Session state** for workflow checkpointing
+- **JSON output** for structured result parsing
+
+## Session Lifecycle Management
+
+### Creating and Managing Sessions
+
+<Steps>
+
+<Step title="Create a session">
+```bash
+# Create session scoped to current directory
+acpx codex sessions new
+
+# Create named session for specific workstream
+acpx codex sessions new --name feature-auth
+```
+</Step>
+
+<Step title="Use the session">
+```bash
+# Implicit prompt to default session
+acpx codex "implement login endpoint"
+
+# Explicit prompt to named session
+acpx codex -s feature-auth "add JWT validation"
+```
+</Step>
+
+<Step title="Inspect session state">
+```bash
+# Show session metadata
+acpx codex sessions show feature-auth
+
+# Show turn history
+acpx codex sessions history feature-auth --limit 10
+
+# Check process status
+acpx codex status -s feature-auth
+```
+</Step>
+
+<Step title="Close when done">
+```bash
+# Soft-close (keeps history)
+acpx codex sessions close feature-auth
+```
+</Step>
+
+</Steps>
+
+### Idempotent Session Ensure
+
+For robust orchestration, use `sessions ensure`:
+
+```bash
+# Get existing session or create if missing
+acpx codex sessions ensure --name api-work
+
+# Now safe to use - guaranteed to exist
+acpx codex -s api-work "review latest changes"
+```
+
+This avoids race conditions when multiple orchestrator instances might create sessions.
+
+## Multi-Turn Conversations
+
+### Building Context Across Turns
+
+Persistent sessions remember conversation history:
+
+```bash
+# Turn 1: Initial analysis
+acpx codex sessions ensure
+acpx codex "analyze the checkout flow for bugs"
+
+# Turn 2: Follow-up using context from turn 1
+acpx codex "now fix the race condition you found"
+
+# Turn 3: Verification using all previous context  
+acpx codex "verify the fix works with the existing tests"
+```
+
+The coding agent has access to all previous turns in the session.
+
+### Context-Aware Delegation
+
+Use session context to build complex multi-step workflows:
+
+```bash
+acpx codex sessions ensure --name refactor
+
+# Step 1: Understanding
+acpx codex -s refactor "explain the current auth architecture"
+
+# Step 2: Planning (agent remembers the architecture)
+acpx codex -s refactor "propose a refactoring plan to add OAuth support"
+
+# Step 3: Incremental execution (agent remembers the plan)
+acpx codex -s refactor "implement step 1 of your plan"
+acpx codex -s refactor "implement step 2 of your plan"
+acpx codex -s refactor "implement step 3 of your plan"
+
+# Step 4: Validation (agent remembers all changes)
+acpx codex -s refactor "verify OAuth integration works end-to-end"
+```
+
+## Parallel Workflow Orchestration
+
+### Named Sessions for Concurrent Work
+
+Orchestrate multiple independent workstreams:
+
+```bash
+#!/bin/bash
+
+# Start three parallel workstreams
+acpx codex sessions ensure --name backend
+acpx codex sessions ensure --name frontend  
+acpx codex sessions ensure --name tests
+
+# Delegate work to each
+acpx --no-wait codex -s backend "implement user profile API"
+acpx --no-wait codex -s frontend "build profile UI component"
+acpx --no-wait codex -s tests "write integration tests for profile feature"
+
+# Monitor progress
+watch -n 5 'acpx codex status -s backend; acpx codex status -s frontend; acpx codex status -s tests'
+```
+
+### Cross-Repository Workflows
+
+Orchestrate work across multiple repositories:
+
+```bash
+#!/bin/bash
+BACKEND="~/repos/api"
+FRONTEND="~/repos/web"
+DOCS="~/repos/documentation"
+
+# Setup sessions
+acpx --cwd "$BACKEND" codex sessions ensure
+acpx --cwd "$FRONTEND" codex sessions ensure
+acpx --cwd "$DOCS" codex sessions ensure
+
+# Orchestrate changes across repos
+acpx --cwd "$BACKEND" codex "add new analytics endpoint"
+
+# Extract API schema for frontend
+SCHEMA=$(acpx --cwd "$BACKEND" --format quiet codex exec "show the analytics endpoint schema")
+
+# Use schema in frontend work
+acpx --cwd "$FRONTEND" codex "implement analytics dashboard using this API: $SCHEMA"
+
+# Document the feature
+acpx --cwd "$DOCS" codex "document the new analytics feature"
+```
+
+## Prompt Queueing
+
+### Sequential Task Execution
+
+When a session is busy, prompts queue automatically:
+
+```bash
+# Terminal 1: Start long-running task
+acpx codex "refactor the entire auth module"
+
+# Terminal 2: Queue follow-up tasks (while refactor is running)
+acpx codex "update auth tests after refactoring"
+acpx codex "generate migration guide for the auth changes"
+```
+
+Tasks execute in order, one at a time, sharing session context.
+
+### Fire-and-Forget Queueing
+
+Orchestrators can queue work without blocking:
+
+```bash
+#!/bin/bash
+
+acpx codex sessions ensure --name batch-work
+
+# Queue multiple tasks
+acpx --no-wait codex -s batch-work "generate OpenAPI spec"
+acpx --no-wait codex -s batch-work "update API client libraries"
+acpx --no-wait codex -s batch-work "write migration notes"
+
+echo "All tasks queued"
+
+# Check queue status
+acpx codex status -s batch-work
+```
+
+The orchestrator continues immediately while the agent processes queued prompts.
+
+### Queue Owner TTL
+
+Control how long the queue owner stays alive:
+
+```bash
+# Keep session warm for 5 minutes between prompts
+acpx --ttl 300 codex "first task"
+
+# Submit follow-ups within TTL window (no cold start)
+acpx codex "second task"
+acpx codex "third task"
+
+# Keep alive indefinitely for interactive workflows
+acpx --ttl 0 codex "start interactive session"
+```
+
+Longer TTL reduces latency for follow-up prompts but keeps processes running.
+
+## Structured Output Parsing
+
+### Extracting Results from JSON
+
+Orchestrators use `--format json` to parse structured output:
+
+```bash
+# Extract tool execution details
+acpx --format json codex exec "audit security" \
+  | jq -r '
+    select(.method=="session/update" and .params.sessionUpdate=="tool_call") 
+    | "Tool: " + .params.title + " (" + .params.status + ")"'
+
+# Get final assistant response only
+RESULT=$(acpx --format json codex exec "summarize findings" \
+  | jq -r '
+    select(.method=="session/update" and .params.sessionUpdate=="agent_message_chunk") 
+    | .params.content.text' \
+  | tr -d '\n')
+
+echo "Summary: $RESULT"
+```
+
+### Quiet Format for Simple Extraction
+
+For just the final text response:
+
+```bash
+# Get clean text output (no tool calls, no thinking)
+SUMMARY=$(acpx --format quiet codex exec "explain the bug in one sentence")
+
+echo "Diagnosis: $SUMMARY"
+```
+
+## Workflow Patterns
+
+### Pattern: Analysis → Fix → Verify
+
+```bash
+#!/bin/bash
+set -e
+
+SESSION="bug-fix-workflow"
+acpx codex sessions ensure --name "$SESSION"
+
+# Phase 1: Analysis
+echo "==> Analyzing issue..."
+acpx codex -s "$SESSION" "identify root cause of checkout timeout"
+
+# Phase 2: Fix
+echo "==> Implementing fix..."
+acpx --approve-all codex -s "$SESSION" "fix the issue you identified"
+
+# Phase 3: Verify
+echo "==> Verifying fix..."
+RESULT=$(acpx --format quiet codex -s "$SESSION" \
+  "run checkout tests and report pass/fail")
+
+if [[ "$RESULT" == *"pass"* ]]; then
+  echo "✓ Fix verified"
+  acpx codex sessions close "$SESSION"
+else
+  echo "✗ Tests still failing: $RESULT"
+  exit 1
+fi
+```
+
+### Pattern: Parallel Analysis with Synthesis
+
+```bash
+#!/bin/bash
+
+# Start parallel analyses
+acpx codex sessions ensure --name security
+acpx codex sessions ensure --name performance  
+acpx codex sessions ensure --name maintainability
+
+# Run analyses in parallel
+acpx --no-wait codex -s security "audit for security issues"
+acpx --no-wait codex -s performance "identify performance bottlenecks"
+acpx --no-wait codex -s maintainability "assess code quality and tech debt"
+
+# Wait for completion (poll status)
+while acpx codex status -s security | grep -q "running"; do sleep 2; done
+while acpx codex status -s performance | grep -q "running"; do sleep 2; done  
+while acpx codex status -s maintainability | grep -q "running"; do sleep 2; done
+
+# Extract results
+SEC=$(acpx --format quiet codex -s security exec "summarize your findings")
+PERF=$(acpx --format quiet codex -s performance exec "summarize your findings")
+MAINT=$(acpx --format quiet codex -s maintainability exec "summarize your findings")
+
+# Synthesize
+acpx codex exec "Create a unified report from these analyses:
+
+Security: $SEC
+
+Performance: $PERF
+
+Maintainability: $MAINT
+
+Prioritize issues and recommend action plan."
+```
+
+### Pattern: Incremental Feature Development
+
+```bash
+#!/bin/bash
+FEATURE="user-notifications"
+
+acpx codex sessions ensure --name "$FEATURE"
+
+# Planning phase
+acpx codex -s "$FEATURE" "design architecture for user notification system"
+
+# Implementation phases
+for STEP in "database schema" "API endpoints" "email service" "UI components" "tests"; do
+  echo "==> Implementing: $STEP"
+  
+  acpx --approve-all codex -s "$FEATURE" \
+    "implement the $STEP for the notification system"
+  
+  # Verification after each step
+  acpx codex -s "$FEATURE" \
+    "run relevant tests for $STEP and confirm it works"
+    
+  if [ $? -ne 0 ]; then
+    echo "✗ Step failed: $STEP"
+    exit 1
+  fi
+  
+  echo "✓ Completed: $STEP"
+done
+
+# Final integration test
+acpx codex -s "$FEATURE" \
+  "run end-to-end tests for the notification system"
+
+echo "✓ Feature complete: $FEATURE"
+acpx codex sessions close "$FEATURE"
+```
+
+## Error Handling in Workflows
+
+### Checking Exit Codes
+
+```bash
+#!/bin/bash
+
+run_step() {
+  local step_name="$1"
+  shift
+  
+  echo "==> Running: $step_name"
+  
+  if ! "$@"; then
+    case $? in
+      1) echo "✗ Runtime error in: $step_name"; return 1 ;;
+      3) echo "✗ Timeout in: $step_name"; return 1 ;;
+      4) 
+        echo "! No session found, creating..."
+        acpx codex sessions ensure
+        "$@"  # Retry
+        ;;
+      5) echo "✗ Permission denied in: $step_name"; return 1 ;;
+      130) echo "✗ Interrupted: $step_name"; return 1 ;;
+      *) echo "✗ Unknown error in: $step_name"; return 1 ;;
+    esac
+  fi
+  
+  echo "✓ Completed: $step_name"
+}
+
+run_step "Analysis" acpx codex "analyze the bug"
+run_step "Fix" acpx --approve-all codex "fix the bug"
+run_step "Test" acpx codex "verify the fix"
+```
+
+### Timeout Management
+
+```bash
+# Short timeout for quick tasks
+acpx --timeout 30 codex exec "run linter"
+
+# Longer timeout for complex tasks
+acpx --timeout 600 codex "refactor entire module and update tests"
+
+# Per-adapter defaults (no --timeout) for normal tasks
+acpx codex "implement new feature"
+```
+
+## Session State Inspection
+
+### Monitoring Active Sessions
+
+```bash
+# List all sessions
+acpx codex sessions list
+
+# Show detailed session metadata
+acpx codex sessions show
+
+# View conversation history
+acpx codex sessions history --limit 20
+
+# Check process status and queue state
+acpx codex status
+```
+
+### JSON Output for Programmatic Monitoring
+
+```bash
+# Get session list as JSON
+SESSIONS=$(acpx --format json codex sessions list)
+
+echo "$SESSIONS" | jq -r '.[] | select(.name=="feature-auth") | .lastUsedAt'
+
+# Get status as structured data
+acpx --format json codex status -s feature-auth
+```
+
+## Advanced Control Operations
+
+### Cancellation
+
+```bash
+# Start long-running task
+acpx codex "analyze entire monorepo" &
+PID=$!
+
+# Cancel if it takes too long
+sleep 60
+if kill -0 $PID 2>/dev/null; then
+  echo "Taking too long, cancelling..."
+  acpx codex cancel
+  wait $PID
+fi
+```
+
+### Mode Switching
+
+<Note>
+Mode support is adapter-specific. Check your adapter documentation for available modes.
+</Note>
+
+```bash
+# Planning mode
+acpx codex set-mode plan
+acpx codex "design the microservices architecture"
+
+# Implementation mode
+acpx codex set-mode code  
+acpx codex "implement the gateway service"
+
+# Review mode (if supported)
+acpx codex set-mode review
+acpx codex "review the implementation for issues"
+```
+
+### Configuration Updates
+
+```bash
+# Adapter-specific config options
+acpx codex set reasoning_effort high
+acpx codex "solve this complex architectural problem"
+
+acpx codex set reasoning_effort low
+acpx codex "write a simple utility function"
+```
+
+## Best Practices
+
+<Steps>
+
+<Step title="Use sessions ensure for robustness">
+Always use `sessions ensure` in automation to handle race conditions and missing sessions gracefully.
+</Step>
+
+<Step title="Name sessions by workstream">
+Use descriptive session names like `feature-auth`, `bugfix-checkout`, `security-audit` to track work.
+</Step>
+
+<Step title="Close sessions when done">
+Run `sessions close` to clean up resources and mark workstreams as complete.
+</Step>
+
+<Step title="Parse JSON for decisions">
+Use `--format json` when the orchestrator needs to parse output and make decisions.
+</Step>
+
+<Step title="Check exit codes">
+Always check exit codes to distinguish success, retryable errors, and fatal failures.
+</Step>
+
+<Step title="Set appropriate timeouts">
+Use `--timeout` for tasks that may exceed default limits.
+</Step>
+
+<Step title="Use --no-wait for parallel work">
+Queue independent tasks with `--no-wait` to maximize parallelism.
+</Step>
+
+</Steps>
+
+## See Also
+
+- [Agent-to-Agent Communication](/advanced/agent-to-agent) - Core delegation patterns
+- [Automation Patterns](/advanced/automation) - CI/CD and scripting  
+- [Session Management](/cli/sessions) - Session basics
+- [Configuration](/guides/configuration) - Config files and defaults

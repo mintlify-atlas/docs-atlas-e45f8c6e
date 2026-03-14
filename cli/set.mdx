@@ -1,0 +1,320 @@
+---
+title: "set"
+description: "Set agent session config options"
+---
+
+## Overview
+
+The `set` command calls the ACP `session/set_config_option` method to change session configuration options. Config keys and values are adapter-defined and vary by agent.
+
+## Syntax
+
+```bash
+acpx [global_options] <agent> set <key> <value> [-s <name>]
+acpx [global_options] set <key> <value> [-s <name>]  # defaults to codex
+```
+
+## Behavior
+
+1. **Finds Session**: Looks up session matching `(agentCommand, cwd, name?)`
+2. **Routes via IPC**: If queue owner is active, sends `session/set_config_option` via IPC
+3. **Direct Reconnect**: If no queue owner, reconnects directly to agent and calls `session/set_config_option`
+4. **Validates Config**: Agent validates the key/value pair and rejects unsupported or invalid options
+
+<Note>
+Config keys and values are adapter-defined. Each agent has its own set of supported options.
+</Note>
+
+## Options
+
+<ParamField path="-s, --session" type="string">
+  Use named session instead of cwd default.
+</ParamField>
+
+## Config Options by Agent
+
+Config support varies by agent. Common options include:
+
+### Codex
+
+- `reasoning_effort` - Reasoning effort level (`low`, `medium`, `high`)
+- `max_turns` - Maximum conversation turns
+- `temperature` - Sampling temperature
+
+<Note>
+For Codex compatibility, acpx automatically translates `thought_level` to `reasoning_effort`:
+- `acpx codex set thought_level high` → `reasoning_effort: high`
+</Note>
+
+### OpenClaw
+
+- `verbosity` - Output verbosity level
+- `max_iterations` - Maximum tool iterations
+
+### Pi
+
+- `detail_level` - Response detail level
+- `max_context` - Maximum context window
+
+Refer to agent-specific documentation for complete config option lists.
+
+<Warning>
+Config keys are not standardized across ACP. An option that works for one agent may not be valid for another.
+</Warning>
+
+## Output
+
+### Text Format (Default)
+
+```
+config set: reasoning_effort=high (3 options)
+```
+
+The number in parentheses indicates the total number of config options returned by the agent.
+
+### JSON Format
+
+```json
+{
+  "action": "config_set",
+  "configId": "reasoning_effort",
+  "value": "high",
+  "resumed": true,
+  "configOptions": [
+    {
+      "id": "reasoning_effort",
+      "value": "high"
+    },
+    {
+      "id": "max_turns",
+      "value": "10"
+    }
+  ],
+  "acpxRecordId": "abc123",
+  "acpxSessionId": "session-xyz",
+  "agentSessionId": "agent-abc"
+}
+```
+
+### Quiet Format
+
+```
+high
+```
+
+## Examples
+
+### Basic Usage
+
+```bash
+# Set config for default session
+acpx codex set reasoning_effort high
+
+# Set config for named session
+acpx codex set max_turns 20 -s backend
+
+# Different agent
+acpx pi set detail_level verbose
+```
+
+### Codex Compatibility Alias
+
+```bash
+# Both are equivalent for Codex
+acpx codex set thought_level high
+acpx codex set reasoning_effort high
+
+# Auto-translation only works for Codex
+acpx pi set thought_level high  # Not translated, may fail
+```
+
+### Configuration Workflow
+
+```bash
+# Create session
+acpx codex sessions new --name analysis
+
+# Configure session
+acpx codex set reasoning_effort high -s analysis
+acpx codex set max_turns 50 -s analysis
+
+# Use configured session
+acpx codex -s analysis "perform deep analysis of auth flow"
+```
+
+### Named Sessions
+
+```bash
+# Different configs for different workflows
+acpx codex sessions new --name quick
+acpx codex set reasoning_effort low -s quick
+
+acpx codex sessions new --name deep
+acpx codex set reasoning_effort high -s deep
+```
+
+### JSON Automation
+
+```bash
+# Set config and capture all options
+OPTIONS=$(acpx --format json codex set reasoning_effort high | jq '.configOptions')
+echo "All config options: $OPTIONS"
+```
+
+### Error Handling
+
+```bash
+# Invalid config key
+acpx codex set invalid_key value
+# Error: Invalid params (adapter rejects unknown key)
+
+# Invalid value
+acpx codex set reasoning_effort invalid
+# Error: Invalid params (adapter rejects invalid value)
+```
+
+## Session Routing
+
+set uses the same session routing as `prompt`:
+
+- Searches for session matching `(agentCommand, cwd, name?)`
+- Uses directory-walk routing up to git root
+- Only operates on active (non-closed) sessions
+- Exits with code `4` if no session found
+
+## IPC vs Direct Connection
+
+**Queue owner active** (prompt running or idle within TTL):
+- Sends `session/set_config_option` via IPC
+- No agent restart
+- Instant config change
+
+**Queue owner inactive**:
+- Spawns agent
+- Attempts `session/load`
+- Calls `session/set_config_option` directly
+- Agent shuts down after config change
+
+Next prompt will start queue owner with the new config setting.
+
+## Config Persistence
+
+Config changes are sent to the agent but may not persist across session loads, depending on the adapter:
+
+- **Some agents** persist config in their session state (survives restarts)
+- **Other agents** reset to default config on `session/load`
+
+Check agent-specific documentation for config persistence behavior.
+
+## Common Patterns
+
+### Adjust Reasoning Effort
+
+```bash
+# High effort for complex tasks
+acpx codex set reasoning_effort high
+acpx codex "architect a new auth system"
+
+# Low effort for simple tasks
+acpx codex set reasoning_effort low
+acpx codex "add a TODO comment"
+```
+
+### Limit Conversation Length
+
+```bash
+# Short conversation
+acpx codex set max_turns 5
+acpx codex "quick bug fix"
+
+# Long conversation
+acpx codex set max_turns 50
+acpx codex "implement feature with tests and docs"
+```
+
+### Session-Specific Config
+
+```bash
+# Backend: high reasoning
+acpx codex sessions new --name backend
+acpx codex set reasoning_effort high -s backend
+
+# Frontend: low reasoning
+acpx codex sessions new --name frontend
+acpx codex set reasoning_effort low -s frontend
+```
+
+## Multiple Config Changes
+
+To set multiple config options, call `set` multiple times:
+
+```bash
+acpx codex set reasoning_effort high
+acpx codex set max_turns 20
+acpx codex set temperature 0.7
+```
+
+Config changes accumulate in the session.
+
+## Exit Codes
+
+| Code | Meaning |
+|------|-------|
+| `0` | Success |
+| `1` | Error (invalid key/value, agent error) |
+| `4` | No session found |
+
+## Troubleshooting
+
+### Config Key Not Supported
+
+```bash
+# Agent rejects key
+acpx codex set invalid_key value
+# Error: Invalid params
+```
+
+Check agent documentation for supported config keys.
+
+### Invalid Value
+
+```bash
+# Agent rejects value
+acpx codex set reasoning_effort invalid
+# Error: Invalid params
+```
+
+Check agent documentation for valid values for each key.
+
+### Session Not Found
+
+```bash
+# No session exists
+acpx codex set reasoning_effort high
+# Error: No acpx session found
+# Create one: acpx codex sessions new
+
+# Create session first
+acpx codex sessions new
+acpx codex set reasoning_effort high
+```
+
+### Config Reset After Restart
+
+Some agents reset config on session load. Set config again after session recovery:
+
+```bash
+# Session crashed
+acpx codex set reasoning_effort high
+acpx codex "continue work"
+# Session auto-recovers, config might reset
+
+# Set config again if needed
+acpx codex set reasoning_effort high
+```
+
+## See Also
+
+- [set-mode](/cli/set-mode) - Change agent mode
+- [prompt](/cli/prompt) - Send prompts to sessions
+- [sessions](/cli/sessions) - Manage sessions

@@ -1,0 +1,321 @@
+---
+title: "status"
+description: "Check local process status for persistent sessions"
+---
+
+## Overview
+
+The `status` command shows the local process status for a cwd-scoped session. It reports whether the queue owner process is running, dead, or no session exists, along with metadata like pid, uptime, and last prompt time.
+
+## Syntax
+
+```bash
+acpx [global_options] <agent> status
+acpx [global_options] <agent> status -s <name>
+acpx [global_options] status
+acpx [global_options] status -s <name>
+```
+
+## Behavior
+
+- Checks for a session matching `(agentCommand, cwd, name?)`
+- If no session exists, reports `no-session`
+- If session exists, probes queue owner health using PID-based check (`kill(pid, 0)` semantics)
+- Reports `running` if queue owner is healthy
+- Reports `dead` if queue owner is not running
+- Status checks are local and do not communicate with the agent
+
+<Note>
+Status checks are PID-based and local. They do not send ACP messages or interact with the agent process.
+</Note>
+
+## Options
+
+<ParamField path="-s, --session" type="string">
+  Use named session instead of cwd default.
+</ParamField>
+
+## Output
+
+### No Session
+
+**Text format**:
+
+```
+session: -
+agent: npx @zed-industries/codex-acp
+pid: -
+status: no-session
+uptime: -
+lastPromptTime: -
+```
+
+**JSON format**:
+
+```json
+{
+  "action": "status_snapshot",
+  "status": "no-session",
+  "summary": "no active session"
+}
+```
+
+**Quiet format**:
+
+```
+no-session
+```
+
+### Running Session
+
+**Text format**:
+
+```
+session: abc123
+agentSessionId: agent-xyz
+agent: npx @zed-industries/codex-acp
+pid: 12345
+status: running
+uptime: 00:15:30
+lastPromptTime: 2026-03-14T10:30:00Z
+```
+
+**JSON format**:
+
+```json
+{
+  "action": "status_snapshot",
+  "status": "alive",
+  "pid": 12345,
+  "summary": "queue owner healthy",
+  "uptime": "00:15:30",
+  "lastPromptTime": "2026-03-14T10:30:00Z",
+  "acpxRecordId": "abc123",
+  "acpxSessionId": "session-xyz",
+  "agentSessionId": "agent-xyz"
+}
+```
+
+**Quiet format**:
+
+```
+running
+```
+
+### Dead Session
+
+**Text format**:
+
+```
+session: abc123
+agentSessionId: agent-xyz
+agent: npx @zed-industries/codex-acp
+pid: -
+status: dead
+uptime: -
+lastPromptTime: 2026-03-14T10:00:00Z
+exitCode: 1
+signal: -
+```
+
+**JSON format**:
+
+```json
+{
+  "action": "status_snapshot",
+  "status": "dead",
+  "pid": null,
+  "summary": "queue owner unavailable",
+  "lastPromptTime": "2026-03-14T10:00:00Z",
+  "exitCode": 1,
+  "signal": null,
+  "acpxRecordId": "abc123",
+  "acpxSessionId": "session-xyz",
+  "agentSessionId": "agent-xyz"
+}
+```
+
+**Quiet format**:
+
+```
+dead
+```
+
+## Status Values
+
+| Status | Meaning |
+|--------|-------|
+| `no-session` | No session record exists for the scope |
+| `running` | Queue owner process is healthy and running |
+| `dead` | Session exists but queue owner is not running |
+
+## Metadata Fields
+
+<ParamField path="session" type="string">
+  acpx record id for the session.
+</ParamField>
+
+<ParamField path="agentSessionId" type="string">
+  Provider-native session id (if exposed by adapter).
+</ParamField>
+
+<ParamField path="agent" type="string">
+  Agent command used to start the session.
+</ParamField>
+
+<ParamField path="pid" type="number">
+  Process id of the queue owner (when running).
+</ParamField>
+
+<ParamField path="status" type="string">
+  Current status: `no-session`, `running`, or `dead`.
+</ParamField>
+
+<ParamField path="uptime" type="string">
+  Formatted uptime `HH:MM:SS` (when running).
+</ParamField>
+
+<ParamField path="lastPromptTime" type="string">
+  ISO 8601 timestamp of the last prompt sent to this session.
+</ParamField>
+
+<ParamField path="exitCode" type="number">
+  Last known exit code (when dead).
+</ParamField>
+
+<ParamField path="signal" type="string">
+  Last known exit signal (when dead).
+</ParamField>
+
+## Examples
+
+### Basic Usage
+
+```bash
+# Check default session
+acpx codex status
+
+# Check named session
+acpx codex status -s backend
+
+# Different agent
+acpx pi status
+```
+
+### While Prompt is Running
+
+```bash
+# Terminal 1: send long-running prompt
+acpx codex "run full test suite and report failures"
+
+# Terminal 2: check status
+acpx codex status
+# Output:
+# session: abc123
+# pid: 12345
+# status: running
+# uptime: 00:02:15
+# lastPromptTime: 2026-03-14T10:30:00Z
+```
+
+### After Session Crash
+
+```bash
+# Session crashed or was killed
+acpx codex status
+# Output:
+# session: abc123
+# status: dead
+# exitCode: 1
+
+# Next prompt auto-recovers
+acpx codex "continue where we left off"
+# Session automatically respawns and resumes
+```
+
+### No Session
+
+```bash
+# Before creating session
+acpx codex status
+# Output:
+# status: no-session
+
+# Create session
+acpx codex sessions new
+
+# Check again
+acpx codex status
+# Output:
+# status: running
+```
+
+### JSON Automation
+
+```bash
+# Check if session is running
+STATUS=$(acpx --format json codex status | jq -r '.status')
+
+if [ "$STATUS" = "alive" ]; then
+  echo "Session is healthy"
+else
+  echo "Session is not running"
+  acpx codex sessions ensure
+fi
+```
+
+### Monitoring Script
+
+```bash
+#!/bin/bash
+# Monitor session health
+
+while true; do
+  STATUS=$(acpx --format quiet codex status)
+  echo "[$(date)] Status: $STATUS"
+  
+  if [ "$STATUS" = "dead" ]; then
+    echo "Session died, restarting..."
+    acpx codex sessions ensure
+  fi
+  
+  sleep 60
+done
+```
+
+## Queue Owner Health
+
+The status command checks queue owner health, not the underlying agent process. The queue owner is a long-running acpx process that:
+
+- Manages prompt queueing for the session
+- Keeps the agent connection alive
+- Drains queued prompts sequentially
+- Shuts down after idle TTL expires
+
+When `status` reports `running`, it means the queue owner is healthy and can accept prompts. When `dead`, the next prompt will spawn a new queue owner and attempt to resume the session.
+
+## Auto-Recovery
+
+If status shows `dead`, the next `prompt` command will automatically:
+
+1. Respawn the agent
+2. Attempt `session/load` with the stored session id
+3. Fall back to `session/new` if loading fails
+4. Continue accepting prompts
+
+No manual intervention is required for recovery.
+
+## Status vs Sessions Show
+
+| Command | Purpose |
+|---------|-------|
+| `status` | Check if queue owner is running (process health) |
+| `sessions show` | Show full session metadata (record details) |
+
+Use `status` for runtime health checks. Use `sessions show` for detailed session inspection.
+
+## See Also
+
+- [sessions](/cli/sessions) - Manage persistent sessions
+- [cancel](/cli/cancel) - Cancel running prompts
+- [prompt](/cli/prompt) - Send prompts to sessions

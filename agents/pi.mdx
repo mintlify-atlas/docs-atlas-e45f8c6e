@@ -1,0 +1,353 @@
+---
+title: Pi Agent
+description: Using the Pi Coding Agent with acpx
+---
+
+Pi is a community-driven coding agent that provides robust ACP integration through the `pi-acp` adapter.
+
+## Overview
+
+- **Built-in name**: `pi`
+- **Command**: `npx pi-acp`
+- **Adapter**: [pi-acp](https://github.com/svkozak/pi-acp) (external adapter)
+- **Upstream**: [Pi Coding Agent](https://github.com/mariozechner/pi)
+- **Type**: External ACP adapter wrapping native Pi CLI
+
+## Installation
+
+### Install Pi Coding Agent
+
+First, install the Pi Coding Agent following the instructions at [github.com/mariozechner/pi](https://github.com/mariozechner/pi).
+
+### Install acpx
+
+```bash
+npm install -g acpx@latest
+```
+
+The `pi-acp` adapter will be auto-downloaded via `npx` on first use.
+
+## Basic Usage
+
+### Create a Session
+
+```bash
+acpx pi sessions new
+```
+
+### Send a Prompt
+
+```bash
+acpx pi "review recent changes"
+```
+
+### One-Shot Execution
+
+```bash
+acpx pi exec "summarize this repo"
+```
+
+## Session Management
+
+Pi supports all standard acpx session operations:
+
+```bash
+# Create and work with sessions
+acpx pi sessions new
+acpx pi "implement user authentication"
+
+# Create named sessions for parallel work
+acpx pi sessions new --name api
+acpx pi -s api "add rate limiting to API endpoints"
+
+acpx pi sessions new --name docs
+acpx pi -s docs "update API documentation"
+
+# List all Pi sessions
+acpx pi sessions list
+
+# Show current session details
+acpx pi sessions show
+
+# View session history
+acpx pi sessions history --limit 10
+
+# Close a session
+acpx pi sessions close
+```
+
+## Session Controls
+
+Check the status of your Pi session:
+
+```bash
+# Check if session is running
+acpx pi status
+
+# Cancel in-flight prompt
+acpx pi cancel
+```
+
+## Working with Files
+
+### Prompt from File
+
+```bash
+acpx pi --file prompt.md
+```
+
+### Prompt from stdin
+
+```bash
+echo "review this code" | acpx pi
+```
+
+### Explicit stdin with context
+
+```bash
+acpx pi --file - "focus on error handling"
+```
+
+## Queue Management
+
+Pi sessions support queue-based prompt handling:
+
+### Enqueue Without Waiting
+
+```bash
+# Submit prompt and return immediately
+acpx pi --no-wait "generate test suite"
+```
+
+### Keep Queue Owner Alive
+
+```bash
+# Keep queue owner alive for 60 seconds for follow-up prompts
+acpx pi --ttl 60 "fix the build"
+
+# Keep queue owner alive indefinitely
+acpx pi --ttl 0 "refactor authentication module"
+```
+
+## Output Formats
+
+### Text Output (default)
+
+```bash
+acpx pi "review this PR"
+```
+
+### JSON Output
+
+```bash
+# Machine-readable NDJSON events
+acpx --format json pi exec "review this PR"
+
+# Strict JSON mode (no non-JSON stderr)
+acpx --format json --json-strict pi exec "review this PR"
+```
+
+### Quiet Output
+
+```bash
+# Final assistant text only
+acpx --format quiet pi "summarize changes"
+```
+
+## Permission Management
+
+Control how Pi accesses files and executes commands:
+
+### Auto-approve All Operations
+
+```bash
+acpx --approve-all pi "run tests and fix failures"
+```
+
+### Auto-approve Reads Only (default)
+
+```bash
+acpx --approve-reads pi "analyze code structure"
+```
+
+### Deny All Operations
+
+```bash
+acpx --deny-all pi "explain what you would do"
+```
+
+### Non-Interactive Permissions
+
+```bash
+# Deny permission requests in non-TTY (default)
+acpx --non-interactive-permissions deny pi "review code"
+
+# Fail instead of denying (useful for CI/CD)
+acpx --non-interactive-permissions fail pi "review code"
+```
+
+## Configuration
+
+### Global Config
+
+Create `~/.acpx/cli/config.json`:
+
+```json
+{
+  "defaultAgent": "pi",
+  "defaultPermissions": "approve-reads",
+  "ttl": 300
+}
+```
+
+### Project Config
+
+Create `.acpxrc.json` in your project root:
+
+```json
+{
+  "defaultAgent": "pi",
+  "agents": {
+    "pi": {
+      "command": "npx pi-acp@latest"
+    }
+  }
+}
+```
+
+### Override Pi Command
+
+If you have a custom Pi installation or want to use specific adapter versions:
+
+```json
+{
+  "agents": {
+    "pi": {
+      "command": "/custom/path/to/pi-acp"
+    }
+  }
+}
+```
+
+## Advanced Features
+
+### Parallel Named Sessions
+
+Work on multiple features simultaneously:
+
+```bash
+# Backend work
+acpx pi sessions new --name backend
+acpx pi -s backend "implement database migration"
+
+# Frontend work
+acpx pi sessions new --name frontend  
+acpx pi -s frontend "update UI components"
+
+# Documentation work
+acpx pi sessions new --name docs
+acpx pi -s docs "write API documentation"
+```
+
+### Cooperative Cancellation
+
+```bash
+# Start a long-running task
+acpx pi "comprehensive codebase refactoring"
+
+# In another terminal, cancel cooperatively
+acpx pi cancel
+```
+
+This sends an ACP `session/cancel` message rather than killing the process.
+
+### Working Directory Override
+
+```bash
+# Work on a different project
+acpx --cwd ~/repos/backend pi "review recent commits"
+```
+
+## Practical Examples
+
+### Code Review Workflow
+
+```bash
+# Create dedicated PR review session
+acpx pi sessions new --name pr-review
+acpx --approve-all pi -s pr-review "Review PR #123 for security issues"
+```
+
+### Test-Driven Development
+
+```bash
+# Create test session with auto-approval
+acpx pi sessions new --name testing
+acpx --approve-all pi -s testing "write unit tests for the auth module"
+acpx --approve-all pi -s testing "fix failing tests"
+```
+
+### Documentation Generation
+
+```bash
+acpx pi sessions new --name docs
+acpx pi -s docs --file doc-requirements.md
+acpx pi -s docs "add examples to all public functions"
+```
+
+## Troubleshooting
+
+### Pi Not Found
+
+If you get an error that Pi is not installed:
+
+1. Install Pi Coding Agent from [github.com/mariozechner/pi](https://github.com/mariozechner/pi)
+2. Ensure Pi is in your PATH
+3. Test with `pi --version`
+
+### Adapter Download Issues
+
+If `pi-acp` fails to download:
+
+```bash
+# Manually install the adapter
+npm install -g pi-acp@latest
+```
+
+### Session Not Found
+
+If prompts fail with "no session found":
+
+```bash
+# Create a session first
+acpx pi sessions new
+
+# Or use ensure for idempotent session creation
+acpx pi sessions ensure
+```
+
+### Permission Denials
+
+If Pi can't access files:
+
+```bash
+# Use approve-all for full access
+acpx --approve-all pi "fix the build"
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Sessions" icon="layer-group" href="/cli/sessions">
+    Deep dive into session lifecycle and management
+  </Card>
+  <Card title="Queue Management" icon="list" href="/concepts/queue-management">
+    Learn about prompt queueing and TTL behavior
+  </Card>
+  <Card title="Configuration" icon="gear" href="/guides/configuration">
+    Customize Pi integration in your config
+  </Card>
+  <Card title="Other Agents" icon="users" href="/agents/overview">
+    Explore other built-in agents
+  </Card>
+</CardGroup>

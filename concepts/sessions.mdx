@@ -1,0 +1,444 @@
+---
+title: "Session Management"
+description: "How acpx manages persistent, named, and scoped sessions with automatic resume and lifecycle control"
+---
+
+## Session model
+
+`acpx` is **conversational by default**. Unlike one-shot CLI tools, acpx maintains persistent session state that survives across invocations.
+
+Each session is identified by:
+
+- **Agent command** - The underlying ACP agent (e.g., `codex`, `claude`, `pi`)
+- **Scope directory** - The directory where the session was created  
+- **Session name** (optional) - Named sessions for parallel workflows (`-s backend`)
+
+This scoping model enables:
+
+- **Per-project isolation** - Different repos get separate sessions
+- **Per-agent separation** - Codex and Claude sessions don't conflict
+- **Named parallelism** - Run multiple workstreams in the same repo
+
+## Session lifecycle
+
+### Creating sessions
+
+Create a new session explicitly:
+
+```bash
+acpx codex sessions new
+```
+
+Or use `ensure` for idempotent get-or-create:
+
+```bash
+acpx codex sessions ensure
+```
+
+Create a **named session** for parallel work:
+
+```bash
+acpx codex sessions new --name backend
+acpx codex sessions new --name frontend  
+```
+
+### Sending prompts
+
+Prompts require an existing session:
+
+```bash
+# Default session
+acpx codex "fix the tests"
+
+# Named session
+acpx codex -s backend "optimize database queries"
+```
+
+<Note>
+If no session exists for the current scope, acpx exits with code `4` and instructs you to run `sessions new` or `sessions ensure`.
+</Note>
+
+### Closing sessions
+
+Soft-close a session (keeps history, terminates processes):
+
+```bash
+# Close default session
+acpx codex sessions close
+
+# Close named session
+acpx codex sessions close backend
+```
+
+Soft-closed sessions:
+
+- Remain on disk with `closed: true` marker
+- Are skipped during auto-resume lookups
+- Can still be inspected with `sessions show`
+- Can be resumed explicitly if the agent supports `session/load`
+
+## Auto-resume behavior
+
+When you send a prompt, acpx automatically finds the right session:
+
+### Directory-walk routing
+
+1. **Find git root** - Walk up from current directory looking for `.git`
+2. **Walk from cwd to git root** - Check each directory level for matching session
+3. **Match on scope** - Find first active session matching `(agent, dir, name?)`
+4. **Resume or error** - Use that session, or exit if none found
+
+If no git root exists, acpx only checks the exact current directory (no parent walk).
+
+### Example routing
+
+```bash
+# In ~/repos/shop/
+acpx codex sessions new
+
+# In ~/repos/shop/src/api/
+acpx codex "review auth.ts"
+# → Finds session from ~/repos/shop/ (parent directory match)
+
+# In ~/repos/shop/src/frontend/  
+acpx codex -s ui "update components"
+# → Looks for named session "ui" in parent directories
+```
+
+### Scoping with `--cwd`
+
+Override the starting directory for routing:
+
+```bash
+acpx --cwd ~/repos/backend codex "run tests"
+```
+
+This changes both:
+
+- **Lookup path** - Start directory walk from `~/repos/backend`
+- **Session creation** - New sessions created at that directory
+
+## Named sessions
+
+Named sessions enable parallel workflows in the same repository:
+
+```bash
+# Create parallel sessions
+acpx codex sessions new --name bugfix
+acpx codex sessions new --name docs
+
+# Work on bug fix
+acpx codex -s bugfix "isolate flaky test"
+
+# Work on docs in parallel  
+acpx codex -s docs "update API reference"
+```
+
+Named sessions are scoped independently:
+
+- Each name gets its own conversation history
+- Queue owners are isolated per session
+- Both can run simultaneously without conflict
+
+<Warning>
+Creating a new session with `sessions new` soft-closes any existing session in the same scope. Use `sessions ensure` for idempotent access.
+</Warning>
+
+## Session persistence
+
+### Storage location
+
+Sessions are stored as JSON files:
+
+```
+~/.acpx/sessions/019c1234-abcd-7890-efgh-012345678901.json
+```
+
+### Session record fields
+
+Each session record contains:
+
+```typescript
+{
+  schema: "2024-01-01",
+  acpxRecordId: "019c1234...",      // acpx session identifier
+  acpSessionId: "019c1234...",      // ACP protocol session ID
+  agentSessionId: "xyz789",         // Agent's internal session ID (optional)
+  
+  agentCommand: "npx codex-acp",
+  cwd: "/home/user/repos/shop",
+  name: undefined,                   // or "backend" for named sessions
+  
+  createdAt: "2026-03-14T10:00:00Z",
+  lastUsedAt: "2026-03-14T10:05:00Z",
+  lastPromptAt: "2026-03-14T10:05:00Z",
+  
+  closed: false,
+  closedAt: undefined,
+  
+  pid: 12345,                        // Agent process PID
+  agentStartedAt: "2026-03-14T10:00:00Z",
+  
+  protocolVersion: "2024-11-05",
+  agentCapabilities: {...},
+  
+  // Conversation state
+  conversationMessages: [...],
+  conversationTokenEstimate: 1500,
+  
+  // Turn history previews
+  turnHistory: [
+    {
+      role: "user",
+      timestamp: "2026-03-14T10:00:00Z",
+      textPreview: "fix the failing tests"
+    },
+    {
+      role: "assistant",  
+      timestamp: "2026-03-14T10:02:00Z",
+      textPreview: "Fixed async timeout in checkout.test.ts"
+    }
+  ]
+}
+```
+
+### Session conversation state
+
+acpx maintains conversation history to enable multi-turn interactions:
+
+- **`conversationMessages`** - Full message history with role/content/timestamp
+- **`conversationTokenEstimate`** - Rough token count for context window tracking
+- **`turnHistory`** - Lightweight previews for `sessions history` display
+
+The conversation is automatically trimmed to a reasonable size to prevent unbounded growth.
+
+## Resume and load behavior
+
+When resuming a session, acpx tries to restore conversation state:
+
+### Load protocol flow
+
+1. Start fresh agent process
+2. Call `initialize` for capability exchange
+3. Attempt `session/load` with stored `sessionId`  
+4. If load succeeds, replay buffered session updates
+5. If load fails (not supported or session not found), fall back to `session/new`
+
+Adapters that support `session/load`:
+
+- **Pi** - Full session/load support
+- **Codex** - Session state managed server-side
+- **Claude Code** - Conversation restoration
+- **OpenClaw** - Gateway-backed session persistence
+
+<Info>
+If `session/load` fails with a recoverable error (session not found, invalid ID), acpx transparently creates a new session. The stored `sessionId` is replaced with the new one.
+</Info>
+
+### Process lifecycle
+
+Session records track the agent process PID:
+
+```bash
+# Check session process status
+acpx codex status
+```
+
+```
+Session ID: 019c1234-abcd-7890-efgh-012345678901
+Agent Command: npx @zed-industries/codex-acp
+Cwd: /home/user/repos/shop
+PID: 12345
+Status: running
+Uptime: 5m 23s
+Last Prompt: 2m 15s ago
+```
+
+If the agent process dies:
+
+- **Next prompt** automatically respawns the agent
+- **Resume attempt** tries `session/load` first
+- **Fallback** creates new session if load fails
+
+## Session inspection
+
+### List all sessions
+
+Show all sessions for an agent:
+
+```bash
+acpx codex sessions list
+```
+
+```
+019c1234...  default  /home/user/repos/shop      2026-03-14T10:05:00Z
+019c5678...  backend  /home/user/repos/shop      2026-03-14T09:30:00Z
+019c9abc...  docs     /home/user/repos/blog      2026-03-13T15:00:00Z [closed]
+```
+
+### Show session details
+
+Inspect a specific session:
+
+```bash
+# Show current cwd session
+acpx codex sessions show
+
+# Show named session
+acpx codex sessions show backend
+```
+
+### View conversation history
+
+Show recent turn history:
+
+```bash
+# Default: last 20 turns
+acpx codex sessions history
+
+# Custom limit
+acpx codex sessions history --limit 10
+
+# Named session
+acpx codex sessions history backend --limit 5
+```
+
+Output format:
+
+```
+2026-03-14T10:00:00Z  user       fix the failing tests
+2026-03-14T10:02:00Z  assistant  Fixed async timeout in checkout.test.ts
+2026-03-14T10:05:00Z  user       add test coverage for edge cases
+2026-03-14T10:08:00Z  assistant  Added 3 new test cases for null/undefined inputs
+```
+
+## Soft-close vs hard delete
+
+acpx uses **soft-close** semantics:
+
+```bash
+acpx codex sessions close
+```
+
+What happens:
+
+1. Terminate queue owner process (if running)
+2. Terminate agent process (if still alive)
+3. Mark session record with `closed: true` and `closedAt` timestamp
+4. **Keep record on disk** (not deleted)
+
+Why soft-close?
+
+- **History preservation** - Inspect past conversations with `sessions show`
+- **Explicit lifecycle** - Clear signal that session is no longer active
+- **Resume capability** - Closed sessions can be resumed if agent supports it
+
+<Note>
+Closed sessions are skipped during auto-resume directory walks. To fully remove a session, manually delete the JSON file from `~/.acpx/sessions/`.
+</Note>
+
+## Process and queue integration
+
+Sessions are tightly integrated with queue owners:
+
+- Each **active session** can have one **queue owner** process
+- Queue owners keep the ACP connection warm for fast follow-up prompts
+- Queue owners drain prompts sequentially (see [Queue Management](/concepts/queue-management))
+- Closing a session terminates both agent process and queue owner
+
+PID tracking enables cleanup:
+
+```typescript
+// Stored in session record
+pid: 12345
+agentStartedAt: "2026-03-14T10:00:00Z"
+
+// On close
+if (isProcessAlive(record.pid)) {
+  await terminateProcess(record.pid)  // SIGTERM then SIGKILL
+}
+```
+
+## One-shot exec mode
+
+For stateless operations, use `exec` to bypass session persistence:
+
+```bash
+acpx codex exec "summarize this repo"
+```
+
+Exec behavior:
+
+- Creates temporary ACP session  
+- Sends prompt once
+- **Does not save** session record to disk
+- No conversation history preserved
+- No auto-resume on next invocation
+
+Use exec for:
+
+- Quick questions
+- CI/automation scripts that don't need state
+- One-time tasks
+
+## Best practices
+
+### When to use named sessions
+
+```bash
+# Good: Parallel workstreams
+acpx codex sessions new --name security-audit
+acpx codex sessions new --name performance-tuning
+
+# Good: Feature branches
+acpx codex sessions new --name feature-auth
+acpx codex sessions new --name feature-payments
+
+# Overkill: Single sequential workflow
+# Just use the default session instead
+```
+
+### When to use ensure vs new
+
+```bash
+# Use ensure for scripts/automation (idempotent)
+acpx codex sessions ensure
+acpx codex "run checks"
+
+# Use new when you explicitly want a fresh start
+acpx codex sessions new  # Closes previous session
+acpx codex "start from scratch"
+```
+
+### When to close sessions
+
+```bash
+# Close when switching context
+acpx codex sessions close
+
+# Close when done with a named workstream  
+acpx codex sessions close feature-auth
+
+# Don't close between every prompt (defeats persistence)
+# Let idle TTL handle cleanup instead
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Queue Management" icon="list" href="/concepts/queue-management">
+    Learn how prompt queuing and queue owners work
+  </Card>
+  
+  <Card title="Permissions" icon="shield-check" href="/concepts/permissions">
+    Configure permission policies for client operations
+  </Card>
+  
+  <Card title="Session Commands" icon="terminal" href="/cli/sessions">
+    Full reference for session management commands
+  </Card>
+  
+  <Card title="Agent Client Protocol" icon="code" href="/concepts/agent-client-protocol">
+    Understand the underlying ACP protocol
+  </Card>
+</CardGroup>

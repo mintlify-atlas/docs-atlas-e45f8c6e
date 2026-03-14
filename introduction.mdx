@@ -1,0 +1,166 @@
+---
+title: "Introduction"
+description: "Learn about acpx, the headless CLI client for the Agent Client Protocol"
+icon: "book-open"
+---
+
+## What is acpx?
+
+`acpx` is a headless CLI client for the [Agent Client Protocol (ACP)](https://agentclientprotocol.com), enabling AI agents and orchestrators to communicate with coding agents over a structured protocol instead of PTY scraping.
+
+One unified command surface for Pi, OpenClaw ACP, Codex, Claude, and other ACP-compatible agents. Built for agent-to-agent communication over the command line.
+
+<Warning>
+  `acpx` is in alpha and the CLI/runtime interfaces are likely to change. Anything you build downstream of this might break until it stabilizes.
+</Warning>
+
+## Why acpx?
+
+Traditional agent orchestration relies on PTY scraping — parsing ANSI escape codes and buffering terminal output. This is fragile, error-prone, and loses structured information.
+
+`acpx` uses the Agent Client Protocol to:
+
+- **Preserve structure**: Receive thinking blocks, tool calls, and diffs as typed JSON
+- **Enable composition**: Chain agents together without string parsing  
+- **Support automation**: Build reliable workflows with predictable output
+- **Simplify debugging**: Inspect session state without terminal noise
+
+## Primary Use Case
+
+The primary user of `acpx` is **another agent, orchestrator, or harness**. Human usability still matters, but it's a secondary constraint.
+
+`acpx` is designed to be the smallest useful ACP client — a lightweight CLI that lets one agent talk to another agent through the Agent Client Protocol without PTY scraping or adapter-specific glue.
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Persistent Sessions" icon="database">
+    Multi-turn conversations that survive across invocations, scoped per repository
+  </Card>
+  <Card title="Named Sessions" icon="folder-tree">
+    Run parallel workstreams in the same repo with `-s backend` and `-s frontend`
+  </Card>
+  <Card title="Prompt Queueing" icon="list">
+    Submit prompts while one is already running — they execute in order
+  </Card>
+  <Card title="Cooperative Cancellation" icon="stop">
+    Send ACP `session/cancel` via queue IPC without tearing down state
+  </Card>
+  <Card title="Soft-Close Lifecycle" icon="door-closed">
+    Close sessions without deleting history from disk
+  </Card>
+  <Card title="Queue Owner TTL" icon="clock">
+    Keep queue owners alive briefly for follow-up prompts with `--ttl`
+  </Card>
+  <Card title="Fire-and-Forget" icon="rocket">
+    Queue prompts with `--no-wait` and return immediately
+  </Card>
+  <Card title="Graceful Cancel" icon="shield">
+    `Ctrl+C` sends ACP `session/cancel` before force-kill fallback
+  </Card>
+  <Card title="Session Controls" icon="sliders">
+    Use `set-mode` and `set` for ACP session configuration
+  </Card>
+  <Card title="Crash Recovery" icon="arrows-rotate">
+    Dead agent processes are detected and sessions reload automatically
+  </Card>
+  <Card title="Flexible Input" icon="keyboard">
+    Prompt from args, stdin, or files with `--file <path>`
+  </Card>
+  <Card title="Config Files" icon="file-code">
+    Global + project JSON config with `acpx config show|init`
+  </Card>
+  <Card title="Session History" icon="clock-rotate-left">
+    Inspect sessions with `sessions show` and `sessions history --limit <n>`
+  </Card>
+  <Card title="Local Status" icon="circle-info">
+    Check process health with `status` (running/dead/no-session, pid, uptime)
+  </Card>
+  <Card title="Client Methods" icon="tools">
+    Stable `fs/*` and `terminal/*` handlers with permission controls
+  </Card>
+  <Card title="Auth Support" icon="key">
+    Stable `authenticate` support via env/cli/config credentials
+  </Card>
+  <Card title="Structured Output" icon="code">
+    Typed ACP messages (thinking, tool calls, diffs) instead of ANSI scraping
+  </Card>
+  <Card title="Any ACP Agent" icon="plug">
+    Built-in registry plus `--agent` escape hatch for custom servers
+  </Card>
+  <Card title="One-Shot Mode" icon="bolt">
+    Use `exec` for stateless fire-and-forget tasks
+  </Card>
+</CardGroup>
+
+## How It Works
+
+```bash
+# Create a session for this project
+acpx codex sessions new
+
+# Submit a prompt
+acpx codex "find the flaky test and fix it"
+
+# Output shows structured ACP events
+[thinking] Investigating test suite for flaky failures
+
+[tool] Run npm test -- --reporter=verbose (running)
+[tool] Run npm test -- --reporter=verbose (completed)
+  output:
+    ✓ auth.login (0.8s)
+    ✗ checkout.submit (timed out after 5000ms)
+    ✓ cart.add (0.3s)
+
+[thinking] Found it — checkout.submit has a race condition
+
+[tool] Edit src/checkout.test.ts (completed)
+  output:
+    Success. Updated 1 file.
+
+[tool] Run npm test -- checkout.submit (completed)
+  output:
+    ✓ checkout.submit (0.4s)
+
+Fixed: added await to the setup hook in checkout.submit.
+
+[done] end_turn
+```
+
+## Built-in Agents
+
+`acpx` includes built-in support for the following ACP-compatible agents:
+
+- **Pi** — Pi Coding Agent
+- **OpenClaw** — OpenClaw ACP bridge  
+- **Codex** — Codex CLI (default)
+- **Claude** — Claude Code
+- **Gemini** — Gemini CLI
+- **Cursor** — Cursor CLI
+- **Copilot** — GitHub Copilot CLI
+- **Droid** — Factory Droid
+- **iFlow** — iFlow CLI
+- **Kilocode** — Kilocode
+- **Kimi** — Kimi CLI
+- **Kiro** — Kiro CLI
+- **OpenCode** — OpenCode
+- **Qwen** — Qwen Code
+
+See the [Built-in Agents](/agents/overview) section for detailed documentation on each agent.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Install acpx globally or use with npx
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get up and running in 5 minutes
+  </Card>
+  <Card title="Core Concepts" icon="book" href="/concepts/agent-client-protocol">
+    Understand ACP sessions and queues
+  </Card>
+  <Card title="CLI Reference" icon="terminal" href="/cli/overview">
+    Complete command reference
+  </Card>
+</CardGroup>

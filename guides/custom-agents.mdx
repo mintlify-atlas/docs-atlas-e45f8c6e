@@ -1,0 +1,574 @@
+---
+title: 'Custom Agents'
+description: 'Integrate your own ACP-compatible agents with acpx'
+icon: 'robot'
+---
+
+## Overview
+
+acpx supports any ACP-compatible agent through two mechanisms:
+
+1. **Config-based registration** - Define custom agents in config files
+2. **`--agent` escape hatch** - Pass raw agent commands directly
+
+This guide shows you how to use both approaches.
+
+## Built-in Agents
+
+First, let's review the built-in agents that work out of the box:
+
+| Agent      | Adapter Package                                  | Wraps                           |
+| ---------- | ------------------------------------------------ | ------------------------------- |
+| `pi`       | `pi-acp@^0.0.22`                                 | Pi Coding Agent                 |
+| `openclaw` | native (`openclaw acp`)                          | OpenClaw ACP bridge             |
+| `codex`    | `@zed-industries/codex-acp@^0.9.5`               | Codex CLI                       |
+| `claude`   | `@zed-industries/claude-agent-acp@^0.21.0`       | Claude Code                     |
+| `gemini`   | native (`gemini --acp`)                          | Gemini CLI                      |
+| `cursor`   | native (`cursor-agent acp`)                      | Cursor CLI                      |
+| `copilot`  | native (`copilot --acp --stdio`)                 | GitHub Copilot CLI              |
+| `droid`    | native (`droid exec --output-format acp`)        | Factory Droid                   |
+| `iflow`    | native (`iflow --experimental-acp`)              | iFlow CLI                       |
+| `kilocode` | `@kilocode/cli` (`npx -y @kilocode/cli acp`)     | Kilocode                        |
+| `kimi`     | native (`kimi acp`)                              | Kimi CLI                        |
+| `kiro`     | native (`kiro-cli acp`)                          | Kiro CLI                        |
+| `opencode` | `opencode-ai` (`npx -y opencode-ai acp`)         | OpenCode                        |
+| `qwen`     | native (`qwen --acp`)                            | Qwen Code                       |
+
+These work immediately with no configuration:
+
+```bash
+acpx pi "review recent changes"
+acpx openclaw "summarize session state"
+acpx codex "fix the tests"
+```
+
+## Custom Agents via Config
+
+Define custom agents in your configuration files to use them like built-ins.
+
+### Basic Registration
+
+Add to global config:
+
+```json ~/.acpx/cli/config.json
+{
+  "agents": {
+    "my-agent": {
+      "command": "./bin/my-acp-server"
+    }
+  }
+}
+```
+
+Or project config:
+
+```json .acpxrc.json
+{
+  "agents": {
+    "my-agent": {
+      "command": "node scripts/dev-acp.js"
+    }
+  }
+}
+```
+
+Now use it like a built-in:
+
+```bash
+acpx my-agent "review this code"
+acpx my-agent sessions new
+acpx my-agent exec "summarize changes"
+```
+
+### Overriding Built-in Agents
+
+Custom agents can override built-ins:
+
+```json .acpxrc.json
+{
+  "agents": {
+    "openclaw": {
+      "command": "env OPENCLAW_HIDE_BANNER=1 node scripts/run-node.mjs acp --url ws://127.0.0.1:18789 --token-file ~/.openclaw/gateway.token --session agent:main:main"
+    }
+  }
+}
+```
+
+Now `acpx openclaw ...` uses your custom command instead of the built-in.
+
+### Complex Commands
+
+Commands can include environment variables, flags, and pipes:
+
+```json ~/.acpx/cli/config.json
+{
+  "agents": {
+    "dev-agent": {
+      "command": "env DEBUG=1 node --max-old-space-size=4096 ./dist/acp-server.js --verbose"
+    },
+    "wrapped-agent": {
+      "command": "./wrapper.sh my-underlying-acp-server"
+    }
+  }
+}
+```
+
+## Using the `--agent` Flag
+
+For one-off usage or testing, use `--agent` to pass a raw command:
+
+### Basic Usage
+
+```bash
+acpx --agent ./my-custom-acp-server "do something"
+```
+
+### With Command Options
+
+```bash
+acpx --agent './bin/dev-acp --profile ci' "run checks"
+```
+
+### With Environment Variables
+
+```bash
+acpx --agent 'env DEBUG=1 ./acp-server' "debug this issue"
+```
+
+### Testing Custom Agents
+
+```bash
+# Test your agent with exec mode
+acpx --agent ./my-agent exec "ping"
+
+# Test with a real task
+acpx --agent ./my-agent --approve-all "list files in current directory"
+```
+
+<Warning>
+Do not combine positional agent names with `--agent`. This is an error:
+
+```bash
+# WRONG - don't do this
+acpx --agent ./my-server codex "review code"
+
+# RIGHT - use one or the other
+acpx --agent ./my-server "review code"
+acpx codex "review code"
+```
+</Warning>
+
+## Creating ACP-Compatible Agents
+
+To create your own ACP agent, you need:
+
+### 1. Implement ACP JSON-RPC Protocol
+
+Your agent must handle ACP messages over stdio:
+
+- **Input**: JSON-RPC requests on stdin
+- **Output**: JSON-RPC responses/notifications on stdout
+- **Errors**: Logs on stderr (optional)
+
+### 2. Support Required Methods
+
+Minimum required methods:
+
+```typescript
+// Initialize a new session
+session/new(params: { cwd?: string }): { sessionId: string }
+
+// Send a prompt
+session/prompt(params: { sessionId: string, prompt: string }): { stopReason: string }
+
+// Session updates (notifications)
+session/update(params: {
+  sessionId: string,
+  update: SessionUpdate
+})
+```
+
+### 3. Optional Methods
+
+For full functionality, implement:
+
+```typescript
+// Load existing session
+session/load(params: { sessionId: string }): { sessionId: string }
+
+// Cancel in-progress prompt
+session/cancel(params: { sessionId: string }): {}
+
+// Set agent mode
+session/set_mode(params: { sessionId: string, mode: string }): {}
+
+// Set config option
+session/set_config_option(params: { sessionId: string, key: string, value: any }): {}
+
+// Authenticate
+authenticate(params: { methods: AuthMethod[] }): { credentials: Record<string, string> }
+```
+
+### Example: Minimal ACP Agent
+
+```javascript minimal-acp-agent.js
+#!/usr/bin/env node
+const readline = require('readline');
+
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+  terminal: false
+});
+
+const sessions = new Map();
+
+function sendResponse(id, result) {
+  console.log(JSON.stringify({ jsonrpc: '2.0', id, result }));
+}
+
+function sendNotification(method, params) {
+  console.log(JSON.stringify({ jsonrpc: '2.0', method, params }));
+}
+
+function handleRequest(msg) {
+  const { id, method, params } = msg;
+
+  switch (method) {
+    case 'session/new': {
+      const sessionId = `session-${Date.now()}`;
+      sessions.set(sessionId, { cwd: params?.cwd || process.cwd() });
+      sendResponse(id, { sessionId });
+      break;
+    }
+
+    case 'session/prompt': {
+      const { sessionId, prompt } = params;
+      
+      // Send thinking notification
+      sendNotification('session/update', {
+        sessionId,
+        update: {
+          sessionUpdate: 'agent_thought_chunk',
+          content: { type: 'text', text: 'Processing your request...' }
+        }
+      });
+
+      // Send response
+      sendNotification('session/update', {
+        sessionId,
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: `You said: ${prompt}` }
+        }
+      });
+
+      sendResponse(id, { stopReason: 'end_turn' });
+      break;
+    }
+
+    default:
+      sendResponse(id, { error: { code: -32601, message: 'Method not found' } });
+  }
+}
+
+rl.on('line', (line) => {
+  try {
+    const msg = JSON.parse(line);
+    handleRequest(msg);
+  } catch (err) {
+    console.error('Parse error:', err.message);
+  }
+});
+```
+
+Make it executable:
+
+```bash
+chmod +x minimal-acp-agent.js
+```
+
+Test it:
+
+```bash
+acpx --agent ./minimal-acp-agent.js exec "hello world"
+```
+
+## Testing Custom Agents
+
+### 1. Test Protocol Compliance
+
+Test basic session workflow:
+
+```bash
+# Test session creation and prompt
+acpx --agent ./my-agent exec "ping"
+```
+
+### 2. Test with Real Tasks
+
+```bash
+# Test file operations
+acpx --agent ./my-agent --approve-all exec "list files"
+
+# Test multi-turn
+acpx --agent ./my-agent sessions new
+acpx --agent ./my-agent "first task"
+acpx --agent ./my-agent "follow-up task"
+```
+
+### 3. Test Output Formats
+
+```bash
+# Test text output
+acpx --format text --agent ./my-agent exec "test"
+
+# Test JSON output
+acpx --format json --agent ./my-agent exec "test" | jq .
+
+# Test quiet output
+acpx --format quiet --agent ./my-agent exec "test"
+```
+
+### 4. Test Error Handling
+
+```bash
+# Test invalid session
+acpx --agent ./my-agent "prompt without session"
+
+# Test cancel
+acpx --agent ./my-agent "long task" &
+acpx --agent ./my-agent cancel
+```
+
+## Real-World Examples
+
+### Local Development Agent
+
+Override production agent with local build:
+
+```json .acpxrc.json
+{
+  "agents": {
+    "myagent": {
+      "command": "node ../myagent/dist/acp-server.js --dev"
+    }
+  },
+  "defaultAgent": "myagent"
+}
+```
+
+### Wrapper Script
+
+Wrap an existing agent with additional logic:
+
+```bash wrapper.sh
+#!/bin/bash
+# Wrapper that adds logging to any ACP agent
+
+LOGFILE="/tmp/acp-agent-$$.log"
+
+echo "[$(date)] Starting agent: $@" >> "$LOGFILE"
+
+# Forward stdin/stdout, log stderr
+"$@" 2>> "$LOGFILE"
+```
+
+Register the wrapper:
+
+```json ~/.acpx/cli/config.json
+{
+  "agents": {
+    "logged-codex": {
+      "command": "./wrapper.sh npx @zed-industries/codex-acp"
+    }
+  }
+}
+```
+
+Use it:
+
+```bash
+acpx logged-codex "review code"
+```
+
+### Multiple Environments
+
+Different agents for different environments:
+
+```json ~/.acpx/cli/config.json
+{
+  "agents": {
+    "dev-agent": {
+      "command": "./bin/acp-server --env dev --debug"
+    },
+    "staging-agent": {
+      "command": "./bin/acp-server --env staging"
+    },
+    "prod-agent": {
+      "command": "./bin/acp-server --env prod --strict"
+    }
+  }
+}
+```
+
+```bash
+# Use environment-specific agents
+acpx dev-agent "test this locally"
+acpx staging-agent "verify on staging"
+acpx prod-agent "check production"
+```
+
+## Advanced: Agent Command Resolution
+
+When you run `acpx myagent "task"`, the resolution order is:
+
+1. Check project config agents (`<cwd>/.acpxrc.json`)
+2. Check global config agents (`~/.acpx/cli/config.json`)
+3. Check built-in agent registry
+4. Use `myagent` as literal command
+
+### Example
+
+**Built-in registry**: `codex` → `npx @zed-industries/codex-acp@^0.9.5`
+
+**Global config**:
+```json ~/.acpx/cli/config.json
+{
+  "agents": {
+    "codex": { "command": "codex-local" }
+  }
+}
+```
+
+**Project config**:
+```json .acpxrc.json
+{
+  "agents": {
+    "codex": { "command": "./dev/codex-debug" }
+  }
+}
+```
+
+**Result**: `acpx codex ...` runs `./dev/codex-debug`
+
+## Troubleshooting
+
+### Agent not found
+
+```
+Error: Agent command failed: ./my-agent: No such file or directory
+```
+
+Solutions:
+- Use absolute paths: `"/home/user/bin/my-agent"`
+- Make script executable: `chmod +x ./my-agent`
+- Verify path: `ls -la ./my-agent`
+
+### Protocol errors
+
+```
+Error: Invalid JSON-RPC response
+```
+
+Solutions:
+- Ensure output is valid JSON
+- Write logs to stderr, not stdout
+- Test with `--format json` to see raw output
+
+### Agent crashes
+
+```
+Error: Agent process exited with code 1
+```
+
+Solutions:
+- Check agent stderr logs
+- Test agent directly: `echo '{"jsonrpc":"2.0","id":1,"method":"session/new","params":{}}' | ./my-agent`
+- Use `--verbose` flag: `acpx --verbose --agent ./my-agent exec "test"`
+
+### Permissions issues
+
+```
+Error: EACCES: permission denied
+```
+
+Solutions:
+- Make agent executable: `chmod +x ./my-agent`
+- Check script shebang: `#!/usr/bin/env node`
+- Verify file ownership: `ls -la ./my-agent`
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use config for permanent agents">
+    Add agents you use regularly to config:
+    
+    ```json ~/.acpx/cli/config.json
+    {
+      "agents": {
+        "my-agent": { "command": "my-acp-server" }
+      }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Use --agent for testing">
+    Test new agents before registering:
+    
+    ```bash
+    acpx --agent ./new-agent exec "test"
+    ```
+  </Accordion>
+
+  <Accordion title="Log to stderr, not stdout">
+    Keep stdout clean for JSON-RPC:
+    
+    ```javascript
+    // Good
+    console.error('Debug info');
+    
+    // Bad - breaks protocol
+    console.log('Debug info');
+    ```
+  </Accordion>
+
+  <Accordion title="Handle graceful shutdown">
+    Clean up on exit:
+    
+    ```javascript
+    process.on('SIGTERM', () => {
+      // Clean up resources
+      process.exit(0);
+    });
+    ```
+  </Accordion>
+
+  <Accordion title="Support session/load for persistence">
+    Implement session loading for crash recovery:
+    
+    ```javascript
+    case 'session/load':
+      // Restore session state from sessionId
+      sendResponse(id, { sessionId: params.sessionId });
+      break;
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/guides/configuration">
+    Deep dive into config file options
+  </Card>
+  <Card title="Basic Usage" icon="terminal" href="/guides/basic-usage">
+    Review fundamental usage patterns
+  </Card>
+  <Card title="ACP Specification" icon="book" href="https://agentclientprotocol.com">
+    Learn the full Agent Client Protocol spec
+  </Card>
+  <Card title="CLI Reference" icon="square-terminal" href="/cli/overview">
+    Complete command reference
+  </Card>
+</CardGroup>

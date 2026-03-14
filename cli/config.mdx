@@ -1,0 +1,444 @@
+---
+title: "config"
+description: "Manage acpx configuration files"
+---
+
+## Overview
+
+The `config` command manages acpx configuration files. It provides subcommands to show the resolved configuration and initialize a default global config template.
+
+## Syntax
+
+```bash
+acpx [global_options] config [subcommand]
+acpx [global_options] config show
+acpx [global_options] config init
+```
+
+## Subcommands
+
+- `show` - Show resolved configuration (default when no subcommand given)
+- `init` - Create global config template if missing
+
+## Configuration Files
+
+acpx reads configuration from two locations:
+
+1. **Global**: `~/.acpx/cli/config.json`
+2. **Project**: `<cwd>/.acpxrc.json`
+
+Project config is merged on top of global config. CLI flags always override config values.
+
+## Supported Keys
+
+```json
+{
+  "defaultAgent": "codex",
+  "defaultPermissions": "approve-all",
+  "nonInteractivePermissions": "deny",
+  "authPolicy": "skip",
+  "ttl": 300,
+  "timeout": null,
+  "format": "text",
+  "agents": {
+    "my-custom": { "command": "./bin/my-acp-server" }
+  },
+  "auth": {
+    "my_auth_method_id": "credential-value"
+  }
+}
+```
+
+### Configuration Options
+
+<ParamField path="defaultAgent" type="string" default="codex">
+  Default agent to use when no agent is specified in the command.
+</ParamField>
+
+<ParamField path="defaultPermissions" type="string" default="approve-reads">
+  Default permission mode: `approve-all`, `approve-reads`, or `deny-all`.
+</ParamField>
+
+<ParamField path="nonInteractivePermissions" type="string" default="deny">
+  Non-TTY permission policy: `deny` or `fail`.
+</ParamField>
+
+<ParamField path="authPolicy" type="string" default="skip">
+  Authentication policy: `skip` or other adapter-specific values.
+</ParamField>
+
+<ParamField path="ttl" type="number" default="300">
+  Queue owner idle TTL in seconds. Set to `0` to disable.
+</ParamField>
+
+<ParamField path="timeout" type="number" default="null">
+  Default timeout for agent responses in seconds. `null` means no timeout.
+</ParamField>
+
+<ParamField path="format" type="string" default="text">
+  Default output format: `text`, `json`, or `quiet`.
+</ParamField>
+
+<ParamField path="agents" type="object">
+  Custom agent definitions. Keys are agent names, values contain `command` strings.
+</ParamField>
+
+<ParamField path="auth" type="object">
+  Authentication credentials. Keys are auth method ids, values are credentials.
+</ParamField>
+
+<ParamField path="disableExec" type="boolean" default="false">
+  Disable the `exec` subcommand when `true`.
+</ParamField>
+
+<ParamField path="mcpServers" type="object">
+  MCP server configurations (advanced).
+</ParamField>
+
+<ParamField path="queueMaxDepth" type="number">
+  Maximum queue depth for prompt queueing (advanced).
+</ParamField>
+
+## config show
+
+Show the resolved configuration (global + project merged).
+
+### Syntax
+
+```bash
+acpx config show
+acpx config  # equivalent
+```
+
+### Output
+
+**Text/JSON format**: Pretty-printed JSON with config values and metadata
+
+```json
+{
+  "defaultAgent": "codex",
+  "defaultPermissions": "approve-reads",
+  "nonInteractivePermissions": "deny",
+  "authPolicy": "skip",
+  "ttl": 300,
+  "timeout": null,
+  "format": "text",
+  "agents": {},
+  "auth": {},
+  "paths": {
+    "global": "/home/user/.acpx/cli/config.json",
+    "project": null
+  },
+  "loaded": {
+    "global": true,
+    "project": false
+  }
+}
+```
+
+### Example
+
+```bash
+# Show config
+acpx config show
+
+# JSON output (same as text)
+acpx --format json config show
+```
+
+## config init
+
+Create a default global config template at `~/.acpx/cli/config.json`.
+
+### Syntax
+
+```bash
+acpx config init
+```
+
+### Behavior
+
+- Creates `~/.acpx/cli/config.json` if it doesn't exist
+- Does not overwrite existing config
+- Creates parent directory `~/.acpx/` if needed
+- Writes a default template with common options
+
+### Output
+
+**Text format**:
+
+```
+Created /home/user/.acpx/cli/config.json
+```
+
+Or if already exists:
+
+```
+Config already exists: /home/user/.acpx/cli/config.json
+```
+
+**JSON format**:
+
+```json
+{
+  "path": "/home/user/.acpx/cli/config.json",
+  "created": true
+}
+```
+
+**Quiet format**: Path only
+
+```
+/home/user/.acpx/cli/config.json
+```
+
+### Example
+
+```bash
+# Initialize config
+acpx config init
+
+# Check what was created
+cat ~/.acpx/cli/config.json
+```
+
+## Examples
+
+### Basic Configuration
+
+```bash
+# Initialize global config
+acpx config init
+
+# Edit it
+vim ~/.acpx/cli/config.json
+
+# Show resolved config
+acpx config show
+```
+
+### Set Default Agent
+
+```json
+// ~/.acpx/cli/config.json
+{
+  "defaultAgent": "pi"
+}
+```
+
+```bash
+# Now "acpx" uses pi by default
+acpx "review changes"
+# Equivalent to: acpx pi "review changes"
+```
+
+### Set Default Permissions
+
+```json
+{
+  "defaultPermissions": "approve-all"
+}
+```
+
+```bash
+# No need for --approve-all flag
+acpx codex "run tests and fix failures"
+```
+
+### Custom Agent
+
+```json
+{
+  "agents": {
+    "my-agent": {
+      "command": "./bin/my-acp-server --debug"
+    }
+  }
+}
+```
+
+```bash
+# Use custom agent
+acpx my-agent "do something"
+```
+
+### Project Config Override
+
+```bash
+# Global config
+cat ~/.acpx/cli/config.json
+# { "defaultPermissions": "approve-reads" }
+
+# Project config
+cat .acpxrc.json
+# { "defaultPermissions": "approve-all" }
+
+# Resolved config uses project value
+acpx config show
+# defaultPermissions: "approve-all"
+```
+
+### Authentication Credentials
+
+```json
+{
+  "auth": {
+    "github_token": "ghp_xxxxx",
+    "api_key": "sk-xxxxx"
+  }
+}
+```
+
+<Warning>
+Never commit authentication credentials to version control. Use global config or environment variables instead.
+</Warning>
+
+### Disable Exec
+
+```json
+{
+  "disableExec": true
+}
+```
+
+```bash
+# exec is now disabled
+acpx codex exec "summarize repo"
+# Error: exec subcommand is disabled by configuration
+```
+
+### OpenClaw Local Checkout Override
+
+```json
+{
+  "agents": {
+    "openclaw": {
+      "command": "env OPENCLAW_HIDE_BANNER=1 OPENCLAW_SUPPRESS_NOTES=1 node scripts/run-node.mjs acp --url ws://127.0.0.1:18789 --token-file ~/.openclaw/gateway.token --session agent:main:main"
+    }
+  }
+}
+```
+
+This overrides the built-in `openclaw` command to use a local checkout.
+
+## Configuration Precedence
+
+Configuration is resolved in this order (later wins):
+
+1. Built-in defaults
+2. Global config (`~/.acpx/cli/config.json`)
+3. Project config (`<cwd>/.acpxrc.json`)
+4. CLI flags
+
+### Example
+
+```bash
+# Global config
+cat ~/.acpx/cli/config.json
+# { "defaultPermissions": "approve-reads", "ttl": 300 }
+
+# Project config
+cat .acpxrc.json
+# { "ttl": 600 }
+
+# Resolved config
+acpx config show
+# defaultPermissions: "approve-reads" (from global)
+# ttl: 600 (from project, overrides global)
+
+# CLI flag overrides everything
+acpx --ttl 30 codex "test"
+# Uses ttl: 30 (from CLI flag)
+```
+
+## Common Patterns
+
+### Global Defaults
+
+```json
+// ~/.acpx/cli/config.json
+{
+  "defaultAgent": "codex",
+  "defaultPermissions": "approve-reads",
+  "ttl": 300,
+  "format": "text"
+}
+```
+
+### Project-Specific Override
+
+```json
+// ~/repos/safe-project/.acpxrc.json
+{
+  "defaultPermissions": "approve-reads"
+}
+
+// ~/repos/trusted-project/.acpxrc.json
+{
+  "defaultPermissions": "approve-all"
+}
+```
+
+### Development Environment
+
+```json
+// ~/.acpx/cli/config.json
+{
+  "agents": {
+    "codex-dev": {
+      "command": "node ~/dev/codex-acp/dist/cli.js --debug"
+    }
+  }
+}
+```
+
+```bash
+acpx codex-dev "test dev version"
+```
+
+## Troubleshooting
+
+### Config Not Loading
+
+```bash
+# Check if config exists
+ls -la ~/.acpx/cli/config.json
+
+# Check if valid JSON
+jq . ~/.acpx/cli/config.json
+
+# Show resolved config
+acpx config show
+```
+
+### Invalid JSON
+
+```bash
+# Fix JSON syntax
+vim ~/.acpx/cli/config.json
+
+# Validate
+jq . ~/.acpx/cli/config.json
+```
+
+### Config Not Overriding
+
+```bash
+# Check precedence
+acpx config show
+
+# Check which files are loaded
+acpx config show | jq '.loaded'
+```
+
+## Security
+
+- **Never commit** `config.json` with auth credentials to version control
+- Use `.gitignore` to exclude `.acpxrc.json` if it contains secrets
+- Prefer environment variables for secrets when possible
+- Restrict file permissions: `chmod 600 ~/.acpx/cli/config.json`
+
+## See Also
+
+- [Overview](/cli/overview) - CLI grammar and global options
+- [sessions](/cli/sessions) - Manage persistent sessions

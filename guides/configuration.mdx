@@ -1,0 +1,619 @@
+---
+title: 'Configuration'
+description: 'Configure acpx defaults, permissions, and custom agents'
+icon: 'gear'
+---
+
+## Overview
+
+acpx uses JSON configuration files to set defaults for agent selection, permissions, output format, and more. Configuration can be global (applies everywhere) or project-specific (applies to a single repository).
+
+## Configuration Files
+
+acpx reads configuration in this order:
+
+1. **Global config**: `~/.acpx/cli/config.json`
+2. **Project config**: `<project>/.acpxrc.json`
+
+Project config values override global config. CLI flags always override both.
+
+## Quick Start
+
+<Steps>
+  <Step title="Initialize global config">
+    Create the default global configuration:
+    
+    ```bash
+    acpx config init
+    ```
+    
+    This creates `~/.acpx/cli/config.json` with defaults.
+  </Step>
+
+  <Step title="View current config">
+    See the resolved configuration:
+    
+    ```bash
+    acpx config show
+    ```
+  </Step>
+
+  <Step title="Edit config file">
+    Edit the configuration manually:
+    
+    ```bash
+    # Global config
+    vim ~/.acpx/cli/config.json
+    
+    # Project config
+    vim .acpxrc.json
+    ```
+  </Step>
+</Steps>
+
+## Configuration Schema
+
+Here's the complete configuration structure:
+
+```json ~/.acpx/cli/config.json
+{
+  "defaultAgent": "codex",
+  "defaultPermissions": "approve-all",
+  "nonInteractivePermissions": "deny",
+  "authPolicy": "skip",
+  "ttl": 300,
+  "timeout": null,
+  "format": "text",
+  "agents": {
+    "my-custom": { "command": "./bin/my-acp-server" }
+  },
+  "auth": {
+    "my_auth_method_id": "credential-value"
+  }
+}
+```
+
+## Configuration Options
+
+### defaultAgent
+
+The agent to use when none is specified.
+
+```json
+{
+  "defaultAgent": "codex"
+}
+```
+
+With this setting:
+```bash
+# These become equivalent:
+acpx "fix the tests"
+acpx codex "fix the tests"
+```
+
+**Type**: String (agent name)  
+**Default**: `"codex"`
+
+### defaultPermissions
+
+Default permission mode for tool access.
+
+```json
+{
+  "defaultPermissions": "approve-reads"
+}
+```
+
+**Options**:
+- `"approve-all"` - Auto-approve all permissions
+- `"approve-reads"` - Auto-approve reads/searches, prompt for others
+- `"deny-all"` - Deny all permissions
+
+**Type**: String  
+**Default**: `"approve-reads"`
+
+### nonInteractivePermissions
+
+How to handle permission prompts in non-TTY environments.
+
+```json
+{
+  "nonInteractivePermissions": "deny"
+}
+```
+
+**Options**:
+- `"deny"` - Deny unapproved operations
+- `"fail"` - Exit with error when approval prompt cannot be shown
+
+**Type**: String  
+**Default**: `"deny"`
+
+### authPolicy
+
+How to handle authentication requests from agents.
+
+```json
+{
+  "authPolicy": "skip"
+}
+```
+
+**Options**:
+- `"skip"` - Skip authentication (continue without credentials)
+- `"fail"` - Exit with error if authentication is requested
+
+**Type**: String  
+**Default**: `"skip"`
+
+### ttl
+
+Queue owner idle timeout in seconds.
+
+```json
+{
+  "ttl": 300
+}
+```
+
+Queue owners stay alive this long after completing work, waiting for new prompts.
+
+**Type**: Number (seconds, 0 or positive)  
+**Default**: `300` (5 minutes)
+
+Set to `0` for infinite TTL:
+```json
+{
+  "ttl": 0
+}
+```
+
+### timeout
+
+Maximum time to wait for agent responses, in seconds.
+
+```json
+{
+  "timeout": 120
+}
+```
+
+Set to `null` for no timeout:
+```json
+{
+  "timeout": null
+}
+```
+
+**Type**: Number (seconds, positive) or `null`  
+**Default**: `null` (no timeout)
+
+### format
+
+Default output format.
+
+```json
+{
+  "format": "text"
+}
+```
+
+**Options**:
+- `"text"` - Human-readable output with tool status
+- `"json"` - Raw ACP JSON-RPC messages
+- `"quiet"` - Final assistant text only
+
+**Type**: String  
+**Default**: `"text"`
+
+### agents
+
+Custom agent command mappings.
+
+```json
+{
+  "agents": {
+    "my-custom": {
+      "command": "./bin/my-acp-server"
+    },
+    "dev-openclaw": {
+      "command": "node scripts/run-node.mjs acp"
+    }
+  }
+}
+```
+
+Use custom agents like built-ins:
+```bash
+acpx my-custom "review this code"
+```
+
+**Type**: Object mapping agent names to `{ command: string }`  
+**Default**: `{}`
+
+### auth
+
+Authentication credentials for agents.
+
+```json
+{
+  "auth": {
+    "github_pat": "ghp_xxxxxxxxxxxx",
+    "openai_key": "sk-xxxxxxxxxxxx"
+  }
+}
+```
+
+Credentials are passed to agents during authentication handshake.
+
+**Type**: Object mapping auth method IDs to credential strings  
+**Default**: `{}`
+
+<Warning>
+Never commit authentication credentials to version control. Use global config for sensitive credentials.
+</Warning>
+
+## Config File Locations
+
+### Global Config
+
+**Path**: `~/.acpx/cli/config.json`
+
+Applies to all acpx invocations unless overridden.
+
+```bash
+# Create with defaults
+acpx config init
+
+# Edit manually
+vim ~/.acpx/cli/config.json
+```
+
+### Project Config
+
+**Path**: `<project-root>/.acpxrc.json`
+
+Applies only within the project directory.
+
+```bash
+# Create project config
+vim .acpxrc.json
+```
+
+**Example project config**:
+```json .acpxrc.json
+{
+  "defaultAgent": "pi",
+  "defaultPermissions": "approve-all",
+  "format": "quiet"
+}
+```
+
+<Note>
+Project config is useful for team-shared defaults, but avoid committing credentials. Use global config for sensitive auth.
+</Note>
+
+## Viewing Configuration
+
+### Show Resolved Config
+
+View the final resolved configuration (global + project + defaults):
+
+```bash
+acpx config show
+```
+
+**Text output**:
+```
+defaultAgent: codex
+defaultPermissions: approve-reads
+nonInteractivePermissions: deny
+authPolicy: skip
+ttl: 300
+timeout: null
+format: text
+agents:
+  my-custom: ./bin/my-acp-server
+authMethods:
+  - github_pat
+```
+
+**JSON output**:
+```bash
+acpx --format json config show
+```
+
+```json
+{
+  "defaultAgent": "codex",
+  "defaultPermissions": "approve-reads",
+  "nonInteractivePermissions": "deny",
+  "authPolicy": "skip",
+  "ttl": 300,
+  "timeout": null,
+  "format": "text",
+  "agents": {
+    "my-custom": { "command": "./bin/my-acp-server" }
+  },
+  "authMethods": ["github_pat"]
+}
+```
+
+## Common Configuration Examples
+
+### Auto-Approve Everything
+
+Useful for automation and CI/CD:
+
+```json ~/.acpx/cli/config.json
+{
+  "defaultPermissions": "approve-all",
+  "nonInteractivePermissions": "deny"
+}
+```
+
+### Use Pi as Default
+
+Prefer Pi over Codex:
+
+```json ~/.acpx/cli/config.json
+{
+  "defaultAgent": "pi"
+}
+```
+
+### Quiet Mode for Scripts
+
+```json ~/.acpx/cli/config.json
+{
+  "format": "quiet"
+}
+```
+
+### Custom Agent for Development
+
+```json .acpxrc.json
+{
+  "agents": {
+    "dev": {
+      "command": "./scripts/dev-acp-server --debug"
+    }
+  },
+  "defaultAgent": "dev"
+}
+```
+
+### Local OpenClaw Override
+
+Override built-in OpenClaw with local checkout:
+
+```json .acpxrc.json
+{
+  "agents": {
+    "openclaw": {
+      "command": "env OPENCLAW_HIDE_BANNER=1 node scripts/run-node.mjs acp --url ws://127.0.0.1:18789 --token-file ~/.openclaw/gateway.token --session agent:main:main"
+    }
+  }
+}
+```
+
+### Team Defaults
+
+Share project config with your team:
+
+```json .acpxrc.json
+{
+  "defaultAgent": "codex",
+  "defaultPermissions": "approve-reads",
+  "ttl": 600,
+  "timeout": 180
+}
+```
+
+Commit `.acpxrc.json` to version control (without secrets).
+
+## Configuration Precedence
+
+Values are resolved in this order (later wins):
+
+1. Built-in defaults
+2. Global config (`~/.acpx/cli/config.json`)
+3. Project config (`.acpxrc.json`)
+4. CLI flags
+
+### Example
+
+**Global config**:
+```json ~/.acpx/cli/config.json
+{
+  "defaultAgent": "pi",
+  "defaultPermissions": "approve-all",
+  "format": "text"
+}
+```
+
+**Project config**:
+```json .acpxrc.json
+{
+  "defaultAgent": "codex",
+  "format": "quiet"
+}
+```
+
+**Result**:
+- `defaultAgent`: `"codex"` (from project config)
+- `defaultPermissions`: `"approve-all"` (from global config)
+- `format`: `"quiet"` (from project config)
+
+**With CLI flag**:
+```bash
+acpx --format json codex "review code"
+```
+
+- `format`: `"json"` (CLI flag wins)
+
+## Advanced: Agent Registry Merging
+
+Custom agents merge with built-in registry:
+
+```json ~/.acpx/cli/config.json
+{
+  "agents": {
+    "openclaw": {
+      "command": "my-custom-openclaw-wrapper"
+    },
+    "my-agent": {
+      "command": "./bin/my-acp"
+    }
+  }
+}
+```
+
+Now:
+- `acpx openclaw ...` uses your custom command
+- `acpx my-agent ...` uses your new agent
+- `acpx codex ...` still uses built-in Codex
+
+## Validation
+
+Config files are validated on load:
+
+### Invalid Type
+
+```json
+{
+  "ttl": "not a number"
+}
+```
+
+Error:
+```
+Invalid config ttl in ~/.acpx/cli/config.json: expected non-negative seconds
+```
+
+### Invalid Enum
+
+```json
+{
+  "format": "html"
+}
+```
+
+Error:
+```
+Invalid config format in ~/.acpx/cli/config.json: expected text, json, or quiet
+```
+
+### Missing Required Field
+
+```json
+{
+  "agents": {
+    "my-agent": {}
+  }
+}
+```
+
+Error:
+```
+Invalid config agents.my-agent.command in ~/.acpx/cli/config.json: expected non-empty string
+```
+
+## Config Management Tips
+
+<AccordionGroup>
+  <Accordion title="Keep secrets in global config only">
+    Never commit authentication credentials:
+    
+    ```json ~/.acpx/cli/config.json (don't commit)
+    {
+      "auth": {
+        "github_pat": "ghp_xxxxxxxxxxxx"
+      }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Share team defaults in project config">
+    Commit non-sensitive defaults:
+    
+    ```json .acpxrc.json (safe to commit)
+    {
+      "defaultAgent": "codex",
+      "ttl": 600,
+      "timeout": 180
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Use per-project agents for local dev">
+    Override built-ins with local versions:
+    
+    ```json .acpxrc.json
+    {
+      "agents": {
+        "openclaw": {
+          "command": "node ../openclaw/scripts/run-node.mjs acp"
+        }
+      }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Document custom agent setup">
+    If your project uses custom agents, document them:
+    
+    ```markdown README.md
+    ## Development
+    
+    This project uses a custom ACP agent. Install it:
+    
+    ```bash
+    npm install -g @mycompany/custom-acp-agent
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+### Config not loading
+
+Check file path and JSON syntax:
+
+```bash
+# Validate JSON
+jsonlint ~/.acpx/cli/config.json
+
+# Check resolved config
+acpx config show
+```
+
+### Permission errors
+
+Ensure config files are readable:
+
+```bash
+chmod 644 ~/.acpx/cli/config.json
+chmod 644 .acpxrc.json
+```
+
+### Unexpected defaults
+
+Check precedence - CLI flags override config:
+
+```bash
+# This uses json format regardless of config
+acpx --format json codex "review code"
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Custom Agents" icon="robot" href="/guides/custom-agents">
+    Learn how to integrate your own ACP agents
+  </Card>
+  <Card title="Session Workflows" icon="layer-group" href="/guides/session-workflows">
+    Master multi-turn conversations with sessions
+  </Card>
+</CardGroup>

@@ -1,0 +1,266 @@
+---
+title: 'Prompt Options'
+description: 'Options specific to prompt and exec commands'
+icon: 'message'
+---
+
+Prompt options apply to `prompt` and `exec` commands, as well as the implicit prompt form when you provide text directly to an agent.
+
+## Session Selection
+
+### `-s, --session <name>`
+
+Use a named session instead of the cwd default session.
+
+<ParamField path="name" type="string">
+  The session name (must not be empty)
+</ParamField>
+
+Named sessions allow multiple parallel conversations in the same repo and agent. The session name is added to the scope key `(agentCommand, cwd, name)`.
+
+**Examples:**
+
+```bash
+# Create and use a named session for PR review
+acpx codex sessions new --name pr-842
+acpx codex -s pr-842 'Review PR #842, list risks, and propose a minimal patch'
+
+# Continue in the same session
+acpx codex -s pr-842 'Now draft commit message and rollout checklist'
+
+# Parallel workstreams in one repo
+acpx codex sessions new --name backend
+acpx codex sessions new --name docs
+acpx codex -s backend 'fix checkout timeout'
+acpx codex -s docs 'document payment retry behavior'
+```
+
+<Note>
+Without `-s`, acpx uses the default session scoped to the current working directory and agent command.
+</Note>
+
+## Wait Behavior
+
+### `--no-wait`
+
+Queue the prompt and return immediately when another prompt is already running.
+
+By default, when you submit a prompt to a session that's already processing another prompt, acpx waits for the queued prompt to complete. With `--no-wait`, the command queues the prompt and exits immediately after queue acknowledgment.
+
+**Examples:**
+
+```bash
+# Queue a prompt in the background while another is running
+acpx codex 'refactor auth module' &
+acpx codex --no-wait 'update tests for auth changes'
+
+# Submit and continue without waiting
+acpx openclaw --no-wait 'analyze dependencies in background'
+```
+
+<Tip>
+Use `--no-wait` when you want to queue work but don't need to see the results immediately.
+</Tip>
+
+## Prompt Input
+
+### `-f, --file <path>`
+
+Read prompt text from a file instead of command arguments.
+
+<ParamField path="path" type="string">
+  File path to read from (use `-` for stdin)
+</ParamField>
+
+This option works with:
+- Implicit prompt: `acpx codex --file prompt.md`
+- Explicit `prompt`: `acpx codex prompt --file prompt.md`
+- `exec`: `acpx codex exec --file prompt.md`
+
+**Reading from a file:**
+
+```bash
+acpx codex --file prompt.md
+acpx pi prompt --file instructions.txt
+acpx openclaw exec --file analysis-request.md
+```
+
+**Reading from stdin:**
+
+```bash
+# Pipe from echo
+echo 'triage failing tests' | acpx codex
+
+# Pipe from heredoc
+cat <<EOF | acpx codex --file -
+Review the recent changes and:
+1. Check for security issues
+2. Validate error handling
+3. Suggest improvements
+EOF
+
+# Combine stdin with additional text
+acpx codex --file - 'also check lint warnings' < prompt.txt
+```
+
+<Note>
+If prompt text is omitted entirely and input is piped, acpx automatically reads from stdin.
+</Note>
+
+**Examples with stdin detection:**
+
+```bash
+# These are equivalent
+echo 'summarize changes' | acpx codex
+echo 'summarize changes' | acpx codex --file -
+
+# Mixing file input with arguments
+acpx codex --file prompt.md 'also check documentation'
+```
+
+## Command Forms
+
+Prompt options can be used with several command forms:
+
+### Implicit prompt
+
+```bash
+acpx [global_options] <agent> [prompt_options] [prompt_text...]
+acpx [global_options] [prompt_options] [prompt_text...]  # defaults to codex
+```
+
+**Examples:**
+
+```bash
+acpx codex 'fix the test failures'
+acpx codex -s feature 'continue the refactor'
+acpx 'summarize this repo'  # uses default agent (codex)
+```
+
+### Explicit `prompt` command
+
+```bash
+acpx [global_options] <agent> prompt [prompt_options] [prompt_text...]
+acpx [global_options] prompt [prompt_options] [prompt_text...]  # defaults to codex
+```
+
+The explicit `prompt` command:
+- Uses a persistent session
+- Finds existing sessions for the scope `(agentCommand, cwd, name?)`
+- Does not auto-create sessions (exits with code `4` if no session exists)
+- Sends the prompt on the resumed or new session
+- Queues if another prompt is already running
+
+**Examples:**
+
+```bash
+acpx codex prompt 'review the changes'
+acpx pi prompt -s docs 'update the documentation'
+acpx prompt 'explain the architecture'  # uses codex
+```
+
+<Warning>
+If no session exists, you'll need to create one first with `sessions new` or use `sessions ensure` for get-or-create behavior.
+</Warning>
+
+### `exec` command
+
+```bash
+acpx [global_options] <agent> exec [prompt_options] [prompt_text...]
+acpx [global_options] exec [prompt_options] [prompt_text...]  # defaults to codex
+```
+
+The `exec` command:
+- Creates a temporary ACP session
+- Sends the prompt once
+- Does not write or use a saved session record
+- Useful for one-off queries without persistent context
+
+**Examples:**
+
+```bash
+acpx claude exec 'summarize src/session.ts in 5 bullets'
+acpx openclaw exec --file analysis.md
+acpx exec 'what is the purpose of this module?'  # uses codex
+```
+
+<Tip>
+Use `exec` for one-shot questions. Use `prompt` (or the implicit form) for conversational workflows where context matters.
+</Tip>
+
+## Combining Options
+
+You can combine prompt options for powerful workflows:
+
+```bash
+# Named session with file input and no-wait
+acpx codex -s pr-123 --file review.md --no-wait
+
+# File input with explicit prompt command
+acpx pi prompt -s analysis --file data.txt
+
+# Reading from stdin with session
+echo 'check for errors' | acpx openclaw -s testing
+
+# Exec with file and global options
+acpx --format json claude exec --file query.md
+```
+
+## Session Auto-Resume
+
+When using `prompt` commands (explicit or implicit), acpx automatically finds and resumes sessions:
+
+1. Detects the nearest git root by checking for `.git` while walking up from the working directory
+2. If a git root is found, walks from the cwd up to that git root (inclusive)
+3. If no git root exists, only checks the exact cwd (no parent-directory walk)
+4. At each checked directory, finds the first active (non-closed) session matching `(agentCommand, dir, optionalName)`
+5. If found, uses that session for prompt queueing
+6. If not found, exits with code `4` and prints guidance to create one via `sessions new`
+
+<Note>
+Use `sessions ensure` when you want idempotent "get-or-create" behavior instead of explicit session creation.
+</Note>
+
+## Prompt Queueing
+
+When a prompt is already running for a session:
+
+1. The queue owner process keeps the active turn running
+2. New acpx invocations enqueue prompts through local IPC
+3. The owner drains queued prompts one-by-one after each completed turn
+4. After the queue drains, the owner waits for new work up to TTL (default 300s)
+5. Submitters either block until completion (default) or exit immediately with `--no-wait`
+
+**Interrupting prompts:**
+
+If you interrupt with `Ctrl+C` during an active turn:
+1. acpx sends `session/cancel` first
+2. Waits briefly for cancelled completion
+3. Force-kills only if needed
+
+## Usage Tips
+
+### When to use `-s, --session`
+
+- **Parallel work**: Multiple features or tasks in the same repo
+- **Long-running contexts**: PR reviews, complex refactors, or investigations
+- **Team workflows**: Named sessions for shared work items
+
+### When to use `--no-wait`
+
+- **Background tasks**: Queue work while doing something else
+- **Fire-and-forget**: Submit prompts without blocking your terminal
+- **Scripting**: Automate prompt submission in pipelines
+
+### When to use `-f, --file`
+
+- **Long prompts**: Multi-paragraph instructions or context
+- **Template prompts**: Reusable prompt files
+- **Piped input**: Integration with other tools and scripts
+- **Structured input**: Formatted instructions or data
+
+## See Also
+
+- [Global Options](/cli/global-options) - Options that apply to all commands
+- [Session Management](/cli/sessions) - Creating and managing sessions
+- [Output Formats](/guides/output-formats) - Understanding text, json, and quiet modes
